@@ -1255,11 +1255,13 @@ function knobStart(k,st){   // для трансформации в OBS запо
   if(k.target!=='obsTransform') return; const p=k.params||{}; st.base=null;
   obsAction(async()=>{ if(!p.source) throw new Error('в ручке не указан источник'); const sceneName=p.scene||await obsCurrentScene();
     const {sceneItemId}=await obsReq('GetSceneItemId',{sceneName,sourceName:p.source});
-    const {sceneItemTransform}=await obsReq('GetSceneItemTransform',{sceneName,sceneItemId}); st.base={sceneName,sceneItemId,tr:sceneItemTransform}; });
+    const {sceneItemTransform}=await obsReq('GetSceneItemTransform',{sceneName,sceneItemId}); st.base={sceneName,sceneItemId,tr:sceneItemTransform};
+    if(st.active&&st.out!=null) knobApply(k,st,now(),true); });   // исходное положение пришло — сразу применяем текущее значение
 }
 function knobApply(k,st,t,force){
   const T=KNOB_TGT[k.target]; if(!T||!T.obs) return;   // локальные цели применяются в processKnobs
   if(t-(st.errT||-1e9)<3000) return;                   // после ошибки OBS не спамим
+  if(k.target==='obsTransform'&&!st.base) return;      // ещё не знаем исходное положение — применим, когда придёт (см. knobStart)
   if(!force&&(t-st.lastSend<70||Math.abs((st.lastOut??-1e9)-st.out)<T.eps)) return; st.lastSend=t; st.lastOut=st.out;
   const p=k.params||{}, v=st.out;
   (async()=>{
