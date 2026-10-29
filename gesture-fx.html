@@ -55,6 +55,20 @@
     padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none}
   #toast.show{opacity:1}
   code{background:#1b1d27;padding:1px 5px;border-radius:4px}
+  /* поле «Эмодзи»: фишки разобранных эмодзи + выбор из полного набора */
+  .efield{flex:1;min-width:0}
+  .efield .row{margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+  .chip{padding:1px 6px;border-radius:6px;background:#232633;border:1px solid var(--line);cursor:pointer;
+    font:16px/1.3 "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}
+  .chip:hover{border-color:var(--danger)}
+  .etabs{display:flex;gap:2px;flex-wrap:wrap;align-items:center;margin-top:6px}
+  .etabs button.b{width:30px;height:30px;padding:0;font-size:16px}
+  .etabs button.on{background:var(--accent);border-color:var(--accent)}
+  .egrid{display:flex;flex-wrap:wrap;gap:1px;max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px;margin-top:6px;background:#1b1d27}
+  .egrid button{width:32px;height:32px;border:0;background:none;border-radius:6px;cursor:pointer;padding:0;
+    font:20px/32px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}
+  .egrid button:hover{background:#2c3040}
 </style>
 </head>
 <body>
@@ -120,6 +134,83 @@ function el(tag, attrs={}, ...kids){
   return e;
 }
 
+// ====================== Эмодзи ======================
+// Любой стандартный эмодзи — одна «фишка»: составные (👨‍👩‍👧, 🏳️‍🌈, 👍🏽, 🇷🇺, 1️⃣) не разваливаются на части.
+const SEG = typeof Intl!=='undefined' && Intl.Segmenter ? new Intl.Segmenter(undefined,{granularity:'grapheme'}) : null;
+const EMOJI_SEQ = /\p{Regional_Indicator}{2}|(?:\p{Extended_Pictographic}|\p{Emoji_Presentation}|[0-9#*]\uFE0F?\u20E3)(?:\p{Emoji_Modifier}|\uFE0F|\u20E3|[\u{E0020}-\u{E007F}])*(?:\u200D(?:\p{Extended_Pictographic}|\p{Emoji_Presentation})(?:\p{Emoji_Modifier}|\uFE0F)*)*/gu;
+const isEmoji = s => /\p{Extended_Pictographic}|\p{Emoji_Presentation}|\u20E3/u.test(s);
+function graphemes(str){
+  if(SEG) return Array.from(SEG.segment(str), s=>s.segment);
+  const out=[]; let last=0;   // запасной вариант без Intl.Segmenter
+  for(const m of str.matchAll(EMOJI_SEQ)){ out.push(...str.slice(last,m.index)); out.push(m[0]); last=m.index+m[0].length; }
+  out.push(...str.slice(last)); return out;
+}
+// Разбирает поле «Эмодзи»: каждый эмодзи — отдельный элемент (пробелы не обязательны), обычный текст — по словам.
+function emojiTokens(str, fallback=[]){
+  const out=[]; let word='';
+  const flush=()=>{ if(word){ out.push(word); word=''; } };
+  for(const gr of graphemes(String(str??''))){
+    if(/^\s+$/.test(gr)) flush();
+    else if(isEmoji(gr)){ flush(); out.push(gr); }
+    else word+=gr;
+  }
+  flush(); return out.length?out:fallback;
+}
+const TONES=['','\u{1F3FB}','\u{1F3FC}','\u{1F3FD}','\u{1F3FE}','\u{1F3FF}'];
+// Оттенок кожи: модификатор ставится после каждой «основы» (👋 → 👋🏽, 👩‍💻 → 👩🏽‍💻). Если шрифт такую
+// комбинацию не знает (например, семьи), остаётся исходный эмодзи.
+function withTone(e, tone){
+  if(!tone||!/\p{Emoji_Modifier_Base}/u.test(e)) return e;
+  const t=e.replace(/(\p{Emoji_Modifier_Base})\uFE0F?/gu,(m,b)=>b+tone);
+  return emojiRenders(t)?t:e;
+}
+// Умеет ли шрифт этот эмодзи: незнакомую составную последовательность он рисует несколькими глифами
+// (заметно шире одного), незнакомый одиночный — чёрным «квадратиком» без цвета.
+const renderCache=new Map(); let probe=null, probeColor=null;
+function emojiRenders(e){
+  let r=renderCache.get(e); if(r!=null) return r;
+  try{
+    if(!probe){ probe=document.createElement('canvas'); probe.width=probe.height=40; probe.g=probe.getContext('2d',{willReadFrequently:true}); }
+    const c=probe.g; c.font=`24px ${EMOJI_FONT}`; c.textBaseline='top'; c.fillStyle='#000';
+    const colored=s=>{ c.clearRect(0,0,40,40); c.fillText(s,2,4); const d=c.getImageData(0,0,40,40).data;
+      for(let i=0;i<d.length;i+=4) if(d[i+3]>0&&(d[i]|d[i+1]|d[i+2])) return true; return false; };
+    const ref=c.measureText('\u{1F600}').width; if(probeColor==null) probeColor=colored('\u{1F600}');
+    const w=c.measureText(e).width;
+    r = w>0 && w<ref*1.45 && (!probeColor||colored(e));
+  }catch{ r=true; }
+  renderCache.set(e,r); return r;
+}
+// Полный стандартный набор: Unicode 16.0 (emoji-test.txt, fully-qualified), порядок как на системных клавиатурах.
+// Варианты с оттенком кожи не хранятся — их даёт withTone().
+const EMOJI_GROUPS=[
+  ["😀","Смайлы и эмоции",
+   "😀😃😄😁😆😅🤣😂🙂🙃🫠😉😊😇🥰😍🤩😘😗☺️😚😙🥲😋😛😜🤪😝🤑🤗🤭🫢🫣🤫🤔🫡🤐🤨😐😑😶🫥😶‍🌫️😏😒🙄😬😮‍💨🤥🫨🙂‍↔️🙂‍↕️😌😔😪🤤😴🫩😷🤒🤕🤢🤮🤧🥵🥶🥴😵😵‍💫🤯🤠🥳🥸😎🤓🧐😕🫤😟🙁☹️😮😯😲😳🥺🥹😦😧😨😰😥😢😭😱😖😣😞😓😩😫🥱😤😡😠🤬😈👿💀☠️💩🤡👹👺👻👽👾🤖😺😸😹😻😼😽🙀😿😾🙈🙉🙊💌💘💝💖💗💓💞💕💟❣️💔❤️‍🔥❤️‍🩹❤️🩷🧡💛💚💙🩵💜🤎🖤🩶🤍💋💯💢💥💫💦💨🕳️💬👁️‍🗨️🗨️🗯️💭💤"],
+  ["👋","Люди и жесты",
+   "👋🤚🖐️✋🖖🫱🫲🫳🫴🫷🫸👌🤌🤏✌️🤞🫰🤟🤘🤙👈👉👆🖕👇☝️🫵👍👎✊👊🤛🤜👏🙌🫶👐🤲🤝🙏✍️💅🤳💪🦾🦿🦵🦶👂🦻👃🧠🫀🫁🦷🦴👀👁️👅👄🫦👶🧒👦👧🧑👱👨🧔🧔‍♂️🧔‍♀️👨‍🦰👨‍🦱👨‍🦳👨‍🦲👩👩‍🦰🧑‍🦰👩‍🦱🧑‍🦱👩‍🦳🧑‍🦳👩‍🦲🧑‍🦲👱‍♀️👱‍♂️🧓👴👵🙍🙍‍♂️🙍‍♀️🙎🙎‍♂️🙎‍♀️🙅🙅‍♂️🙅‍♀️🙆🙆‍♂️🙆‍♀️💁💁‍♂️💁‍♀️🙋🙋‍♂️🙋‍♀️🧏🧏‍♂️🧏‍♀️🙇🙇‍♂️🙇‍♀️🤦🤦‍♂️🤦‍♀️🤷🤷‍♂️🤷‍♀️🧑‍⚕️👨‍⚕️👩‍⚕️🧑‍🎓👨‍🎓👩‍🎓🧑‍🏫👨‍🏫👩‍🏫🧑‍⚖️👨‍⚖️👩‍⚖️🧑‍🌾👨‍🌾👩‍🌾🧑‍🍳👨‍🍳👩‍🍳🧑‍🔧👨‍🔧👩‍🔧🧑‍🏭👨‍🏭👩‍🏭🧑‍💼👨‍💼👩‍💼🧑‍🔬👨‍🔬👩‍🔬🧑‍💻👨‍💻👩‍💻🧑‍🎤👨‍🎤👩‍🎤🧑‍🎨👨‍🎨👩‍🎨🧑‍✈️👨‍✈️👩‍✈️🧑‍🚀👨‍🚀👩‍🚀🧑‍🚒👨‍🚒👩‍🚒👮👮‍♂️👮‍♀️🕵️🕵️‍♂️🕵️‍♀️💂💂‍♂️💂‍♀️🥷👷👷‍♂️👷‍♀️🫅🤴👸👳👳‍♂️👳‍♀️👲🧕🤵🤵‍♂️🤵‍♀️👰👰‍♂️👰‍♀️🤰🫃🫄🤱👩‍🍼👨‍🍼🧑‍🍼👼🎅🤶🧑‍🎄🦸🦸‍♂️🦸‍♀️🦹🦹‍♂️🦹‍♀️🧙🧙‍♂️🧙‍♀️🧚🧚‍♂️🧚‍♀️🧛🧛‍♂️🧛‍♀️🧜🧜‍♂️🧜‍♀️🧝🧝‍♂️🧝‍♀️🧞🧞‍♂️🧞‍♀️🧟🧟‍♂️🧟‍♀️🧌💆💆‍♂️💆‍♀️💇💇‍♂️💇‍♀️🚶🚶‍♂️🚶‍♀️🚶‍➡️🚶‍♀️‍➡️🚶‍♂️‍➡️🧍🧍‍♂️🧍‍♀️🧎🧎‍♂️🧎‍♀️🧎‍➡️🧎‍♀️‍➡️🧎‍♂️‍➡️🧑‍🦯🧑‍🦯‍➡️👨‍🦯👨‍🦯‍➡️👩‍🦯👩‍🦯‍➡️🧑‍🦼🧑‍🦼‍➡️👨‍🦼👨‍🦼‍➡️👩‍🦼👩‍🦼‍➡️🧑‍🦽🧑‍🦽‍➡️👨‍🦽👨‍🦽‍➡️👩‍🦽👩‍🦽‍➡️🏃🏃‍♂️🏃‍♀️🏃‍➡️🏃‍♀️‍➡️🏃‍♂️‍➡️💃🕺🕴️👯👯‍♂️👯‍♀️🧖🧖‍♂️🧖‍♀️🧗🧗‍♂️🧗‍♀️🤺🏇⛷️🏂🏌️🏌️‍♂️🏌️‍♀️🏄🏄‍♂️🏄‍♀️🚣🚣‍♂️🚣‍♀️🏊🏊‍♂️🏊‍♀️⛹️⛹️‍♂️⛹️‍♀️🏋️🏋️‍♂️🏋️‍♀️🚴🚴‍♂️🚴‍♀️🚵🚵‍♂️🚵‍♀️🤸🤸‍♂️🤸‍♀️🤼🤼‍♂️🤼‍♀️🤽🤽‍♂️🤽‍♀️🤾🤾‍♂️🤾‍♀️🤹🤹‍♂️🤹‍♀️🧘🧘‍♂️🧘‍♀️🛀🛌🧑‍🤝‍🧑👭👫👬💏👩‍❤️‍💋‍👨👨‍❤️‍💋‍👨👩‍❤️‍💋‍👩💑👩‍❤️‍👨👨‍❤️‍👨👩‍❤️‍👩👨‍👩‍👦👨‍👩‍👧👨‍👩‍👧‍👦👨‍👩‍👦‍👦👨‍👩‍👧‍👧👨‍👨‍👦👨‍👨‍👧👨‍👨‍👧‍👦👨‍👨‍👦‍👦👨‍👨‍👧‍👧👩‍👩‍👦👩‍👩‍👧👩‍👩‍👧‍👦👩‍👩‍👦‍👦👩‍👩‍👧‍👧👨‍👦👨‍👦‍👦👨‍👧👨‍👧‍👦👨‍👧‍👧👩‍👦👩‍👦‍👦👩‍👧👩‍👧‍👦👩‍👧‍👧🗣️👤👥🫂👪🧑‍🧑‍🧒🧑‍🧑‍🧒‍🧒🧑‍🧒🧑‍🧒‍🧒👣🫆"],
+  ["🐻","Животные и природа",
+   "🐵🐒🦍🦧🐶🐕🦮🐕‍🦺🐩🐺🦊🦝🐱🐈🐈‍⬛🦁🐯🐅🐆🐴🫎🫏🐎🦄🦓🦌🦬🐮🐂🐃🐄🐷🐖🐗🐽🐏🐑🐐🐪🐫🦙🦒🐘🦣🦏🦛🐭🐁🐀🐹🐰🐇🐿️🦫🦔🦇🐻🐻‍❄️🐨🐼🦥🦦🦨🦘🦡🐾🦃🐔🐓🐣🐤🐥🐦🐧🕊️🦅🦆🦢🦉🦤🪶🦩🦚🦜🪽🐦‍⬛🪿🐦‍🔥🐸🐊🐢🦎🐍🐲🐉🦕🦖🐳🐋🐬🦭🐟🐠🐡🦈🐙🐚🪸🪼🦀🦞🦐🦑🦪🐌🦋🐛🐜🐝🪲🐞🦗🪳🕷️🕸️🦂🦟🪰🪱🦠💐🌸💮🪷🏵️🌹🥀🌺🌻🌼🌷🪻🌱🪴🌲🌳🌴🌵🌾🌿☘️🍀🍁🍂🍃🪹🪺🍄🪾"],
+  ["🍔","Еда и напитки",
+   "🍇🍈🍉🍊🍋🍋‍🟩🍌🍍🥭🍎🍏🍐🍑🍒🍓🫐🥝🍅🫒🥥🥑🍆🥔🥕🌽🌶️🫑🥒🥬🥦🧄🧅🥜🫘🌰🫚🫛🍄‍🟫🫜🍞🥐🥖🫓🥨🥯🥞🧇🧀🍖🍗🥩🥓🍔🍟🍕🌭🥪🌮🌯🫔🥙🧆🥚🍳🥘🍲🫕🥣🥗🍿🧈🧂🥫🍱🍘🍙🍚🍛🍜🍝🍠🍢🍣🍤🍥🥮🍡🥟🥠🥡🍦🍧🍨🍩🍪🎂🍰🧁🥧🍫🍬🍭🍮🍯🍼🥛☕🫖🍵🍶🍾🍷🍸🍹🍺🍻🥂🥃🫗🥤🧋🧃🧉🧊🥢🍽️🍴🥄🔪🫙🏺"],
+  ["✈️","Путешествия и места",
+   "🌍🌎🌏🌐🗺️🗾🧭🏔️⛰️🌋🗻🏕️🏖️🏜️🏝️🏞️🏟️🏛️🏗️🧱🪨🪵🛖🏘️🏚️🏠🏡🏢🏣🏤🏥🏦🏨🏩🏪🏫🏬🏭🏯🏰💒🗼🗽⛪🕌🛕🕍⛩️🕋⛲⛺🌁🌃🏙️🌄🌅🌆🌇🌉♨️🎠🛝🎡🎢💈🎪🚂🚃🚄🚅🚆🚇🚈🚉🚊🚝🚞🚋🚌🚍🚎🚐🚑🚒🚓🚔🚕🚖🚗🚘🚙🛻🚚🚛🚜🏎️🏍️🛵🦽🦼🛺🚲🛴🛹🛼🚏🛣️🛤️🛢️⛽🛞🚨🚥🚦🛑🚧⚓🛟⛵🛶🚤🛳️⛴️🛥️🚢✈️🛩️🛫🛬🪂💺🚁🚟🚠🚡🛰️🚀🛸🛎️🧳⌛⏳⌚⏰⏱️⏲️🕰️🕛🕧🕐🕜🕑🕝🕒🕞🕓🕟🕔🕠🕕🕡🕖🕢🕗🕣🕘🕤🕙🕥🕚🕦🌑🌒🌓🌔🌕🌖🌗🌘🌙🌚🌛🌜🌡️☀️🌝🌞🪐⭐🌟🌠🌌☁️⛅⛈️🌤️🌥️🌦️🌧️🌨️🌩️🌪️🌫️🌬️🌀🌈🌂☂️☔⛱️⚡❄️☃️⛄☄️🔥💧🌊"],
+  ["⚽","Активности",
+   "🎃🎄🎆🎇🧨✨🎈🎉🎊🎋🎍🎎🎏🎐🎑🧧🎀🎁🎗️🎟️🎫🎖️🏆🏅🥇🥈🥉⚽⚾🥎🏀🏐🏈🏉🎾🥏🎳🏏🏑🏒🥍🏓🏸🥊🥋🥅⛳⛸️🎣🤿🎽🎿🛷🥌🎯🪀🪁🔫🎱🔮🪄🎮🕹️🎰🎲🧩🧸🪅🪩🪆♠️♥️♦️♣️♟️🃏🀄🎴🎭🖼️🎨🧵🪡🧶🪢"],
+  ["💡","Предметы",
+   "👓🕶️🥽🥼🦺👔👕👖🧣🧤🧥🧦👗👘🥻🩱🩲🩳👙👚🪭👛👜👝🛍️🎒🩴👞👟🥾🥿👠👡🩰👢🪮👑👒🎩🎓🧢🪖⛑️📿💄💍💎🔇🔈🔉🔊📢📣📯🔔🔕🎼🎵🎶🎙️🎚️🎛️🎤🎧📻🎷🪗🎸🎹🎺🎻🪕🥁🪘🪇🪈🪉📱📲☎️📞📟📠🔋🪫🔌💻🖥️🖨️⌨️🖱️🖲️💽💾💿📀🧮🎥🎞️📽️🎬📺📷📸📹📼🔍🔎🕯️💡🔦🏮🪔📔📕📖📗📘📙📚📓📒📃📜📄📰🗞️📑🔖🏷️💰🪙💴💵💶💷💸💳🧾💹✉️📧📨📩📤📥📦📫📪📬📭📮🗳️✏️✒️🖋️🖊️🖌️🖍️📝💼📁📂🗂️📅📆🗒️🗓️📇📈📉📊📋📌📍📎🖇️📏📐✂️🗃️🗄️🗑️🔒🔓🔏🔐🔑🗝️🔨🪓⛏️⚒️🛠️🗡️⚔️💣🪃🏹🛡️🪚🔧🪛🔩⚙️🗜️⚖️🦯🔗⛓️‍💥⛓️🪝🧰🧲🪜🪏⚗️🧪🧫🧬🔬🔭📡💉🩸💊🩹🩼🩺🩻🚪🛗🪞🪟🛏️🛋️🪑🚽🪠🚿🛁🪤🪒🧴🧷🧹🧺🧻🪣🧼🫧🪥🧽🧯🛒🚬⚰️🪦⚱️🧿🪬🗿🪧🪪"],
+  ["🔣","Символы",
+   "🏧🚮🚰♿🚹🚺🚻🚼🚾🛂🛃🛄🛅⚠️🚸⛔🚫🚳🚭🚯🚱🚷📵🔞☢️☣️⬆️↗️➡️↘️⬇️↙️⬅️↖️↕️↔️↩️↪️⤴️⤵️🔃🔄🔙🔚🔛🔜🔝🛐⚛️🕉️✡️☸️☯️✝️☦️☪️☮️🕎🔯🪯♈♉♊♋♌♍♎♏♐♑♒♓⛎🔀🔁🔂▶️⏩⏭️⏯️◀️⏪⏮️🔼⏫🔽⏬⏸️⏹️⏺️⏏️🎦🔅🔆📶🛜📳📴♀️♂️⚧️✖️➕➖➗🟰♾️‼️⁉️❓❔❕❗〰️💱💲⚕️♻️⚜️🔱📛🔰⭕✅☑️✔️❌❎➰➿〽️✳️✴️❇️©️®️™️🫟#️⃣*️⃣0️⃣1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣8️⃣9️⃣🔟🔠🔡🔢🔣🔤🅰️🆎🅱️🆑🆒🆓ℹ️🆔Ⓜ️🆕🆖🅾️🆗🅿️🆘🆙🆚🈁🈂️🈷️🈶🈯🉐🈹🈚🈲🉑🈸🈴🈳㊗️㊙️🈺🈵🔴🟠🟡🟢🔵🟣🟤⚫⚪🟥🟧🟨🟩🟦🟪🟫⬛⬜◼️◻️◾◽▪️▫️🔶🔷🔸🔹🔺🔻💠🔘🔳🔲"],
+  ["🏁","Флаги",
+   "🏁🚩🎌🏴🏳️🏳️‍🌈🏳️‍⚧️🏴‍☠️🇦🇨🇦🇩🇦🇪🇦🇫🇦🇬🇦🇮🇦🇱🇦🇲🇦🇴🇦🇶🇦🇷🇦🇸🇦🇹🇦🇺🇦🇼🇦🇽🇦🇿🇧🇦🇧🇧🇧🇩🇧🇪🇧🇫🇧🇬🇧🇭🇧🇮🇧🇯🇧🇱🇧🇲🇧🇳🇧🇴🇧🇶🇧🇷🇧🇸🇧🇹🇧🇻🇧🇼🇧🇾🇧🇿🇨🇦🇨🇨🇨🇩🇨🇫🇨🇬🇨🇭🇨🇮🇨🇰🇨🇱🇨🇲🇨🇳🇨🇴🇨🇵🇨🇶🇨🇷🇨🇺🇨🇻🇨🇼🇨🇽🇨🇾🇨🇿🇩🇪🇩🇬🇩🇯🇩🇰🇩🇲🇩🇴🇩🇿🇪🇦🇪🇨🇪🇪🇪🇬🇪🇭🇪🇷🇪🇸🇪🇹🇪🇺🇫🇮🇫🇯🇫🇰🇫🇲🇫🇴🇫🇷🇬🇦🇬🇧🇬🇩🇬🇪🇬🇫🇬🇬🇬🇭🇬🇮🇬🇱🇬🇲🇬🇳🇬🇵🇬🇶🇬🇷🇬🇸🇬🇹🇬🇺🇬🇼🇬🇾🇭🇰🇭🇲🇭🇳🇭🇷🇭🇹🇭🇺🇮🇨🇮🇩🇮🇪🇮🇱🇮🇲🇮🇳🇮🇴🇮🇶🇮🇷🇮🇸🇮🇹🇯🇪🇯🇲🇯🇴🇯🇵🇰🇪🇰🇬🇰🇭🇰🇮🇰🇲🇰🇳🇰🇵🇰🇷🇰🇼🇰🇾🇰🇿🇱🇦🇱🇧🇱🇨🇱🇮🇱🇰🇱🇷🇱🇸🇱🇹🇱🇺🇱🇻🇱🇾🇲🇦🇲🇨🇲🇩🇲🇪🇲🇫🇲🇬🇲🇭🇲🇰🇲🇱🇲🇲🇲🇳🇲🇴🇲🇵🇲🇶🇲🇷🇲🇸🇲🇹🇲🇺🇲🇻🇲🇼🇲🇽🇲🇾🇲🇿🇳🇦🇳🇨🇳🇪🇳🇫🇳🇬🇳🇮🇳🇱🇳🇴🇳🇵🇳🇷🇳🇺🇳🇿🇴🇲🇵🇦🇵🇪🇵🇫🇵🇬🇵🇭🇵🇰🇵🇱🇵🇲🇵🇳🇵🇷🇵🇸🇵🇹🇵🇼🇵🇾🇶🇦🇷🇪🇷🇴🇷🇸🇷🇺🇷🇼🇸🇦🇸🇧🇸🇨🇸🇩🇸🇪🇸🇬🇸🇭🇸🇮🇸🇯🇸🇰🇸🇱🇸🇲🇸🇳🇸🇴🇸🇷🇸🇸🇸🇹🇸🇻🇸🇽🇸🇾🇸🇿🇹🇦🇹🇨🇹🇩🇹🇫🇹🇬🇹🇭🇹🇯🇹🇰🇹🇱🇹🇲🇹🇳🇹🇴🇹🇷🇹🇹🇹🇻🇹🇼🇹🇿🇺🇦🇺🇬🇺🇲🇺🇳🇺🇸🇺🇾🇺🇿🇻🇦🇻🇨🇻🇪🇻🇬🇻🇮🇻🇳🇻🇺🇼🇫🇼🇸🇽🇰🇾🇪🇾🇹🇿🇦🇿🇲🇿🇼🏴󠁧󠁢󠁥󠁮󠁧󠁿🏴󠁧󠁢󠁳󠁣󠁴󠁿🏴󠁧󠁢󠁷󠁬󠁳󠁿"],
+];
+const groupCache=new Map();
+function groupEmoji(i, tone){
+  const key=i+':'+tone; let r=groupCache.get(key); if(r) return r;
+  let base=groupCache.get(i); if(!base){ base=emojiTokens(EMOJI_GROUPS[i][2]); groupCache.set(i,base); }
+  const list=[]; let hidden=0;
+  for(const e of base){ if(!emojiRenders(e)){ hidden++; continue; } list.push(tone?withTone(e,tone):e); }
+  r={list,hidden}; groupCache.set(key,r); return r;
+}
+
 // ====================== Эффекты ======================
 const cv = $('#stage'), g = cv.getContext('2d');
 let W=0, H=0;
@@ -128,7 +219,7 @@ addEventListener('resize', resize); resize();
 
 const fx = [];
 const cam = {shakeUntil:0, shakeAmp:0, shakeDur:1, zoom:null, glitchUntil:0};
-const tips = new Map();   // gestureId -> последняя позиция кончика указательного пальца
+const tips = new Map();   // «жест» или «жест@рука» -> последняя позиция кончика указательного пальца
 const now = () => performance.now();
 
 const DRAW = {
@@ -165,24 +256,33 @@ const P = { // описания параметров
   count:(def)=>({label:'Количество',type:'number',def}),
   duration:(def)=>({label:'Длительность, с',type:'number',def}),
   color:(def)=>({label:'Цвет',type:'color',def}),
-  emoji:(def)=>({label:'Эмодзи',type:'text',def}),
+  emoji:(def)=>({label:'Эмодзи',type:'emoji',def}),
 };
 
+// anchored — эффект привязан к руке: при жесте двумя руками срабатывает из каждой (см. perHand в правиле).
 const EFFECTS = {
-  confetti:{name:'Конфетти',icon:'🎉',sound:'pop',
+  confetti:{name:'Конфетти',icon:'🎉',sound:'pop',anchored:true,
     params:{count:P.count(160), origin:{label:'Откуда',type:'select',options:{hand:'от руки',top:'сверху'},def:'hand'}},
     run(p,a){ const cols=['#ff4d6d','#ffd23f','#3bceac','#4d9fff','#b44dff','#ffffff']; const top=p.origin==='top';
       for(let i=0;i<p.count;i++) fx.push(particle({kind:'confetti',x:top?rnd(0,W):a.x,y:top?rnd(-60,-10):a.y,
         vx:top?rnd(-60,60):rnd(-700,700),vy:top?rnd(80,280):rnd(-1150,-300),g:top?300:900,drag:top?0.4:1.5,
         life:rnd(2.5,4.5),w:rnd(8,15),h:rnd(5,9),rot:rnd(0,6.3),vr:rnd(-8,8),flip:rnd(4,12),color:cols[i%cols.length],delay:top?rnd(0,1.2):0})); }},
-  hearts:{name:'Сердечки',icon:'💖',sound:'pop',
+  hearts:{name:'Сердечки',icon:'💖',sound:'pop',anchored:true,
     params:{emoji:P.emoji('❤️'),count:P.count(30)},
-    run(p,a){ const chars=[...p.emoji.trim()].length?p.emoji.trim().split(/\s+/):['❤️'];
+    run(p,a){ const chars=emojiTokens(p.emoji,['❤️']);
       for(let i=0;i<p.count;i++) fx.push(particle({kind:'emoji',ch:chars[i%chars.length],x:a.x+rnd(-70,70),y:a.y+rnd(-20,20),
         vx:rnd(-40,40),vy:rnd(-380,-160),g:-40,life:rnd(2,3.2),size:rnd(28,64),wob:rnd(10,30),ph:rnd(0,6),grow:true,delay:rnd(0,0.6)})); }},
+  reaction:{name:'Эмодзи-реакция',icon:'😍',sound:'pop',anchored:true,
+    params:{emoji:P.emoji('😍 🔥 👏'),size:{label:'Размер, px',type:'number',def:150},duration:P.duration(1.5)},
+    run(p,a){ const chars=emojiTokens(p.emoji,['😍']), ch=chars[Math.floor(Math.random()*chars.length)];
+      const x0=a.x, y0=a.y-p.size*0.4, tilt=rnd(-0.25,0.25);
+      fx.push(entity(p.duration,function(){ const t=this.age/this.life, k=Math.min(1,t/0.22);
+        const s=(1-Math.pow(1-k,3))*1.15-0.15*clamp((t-0.22)/0.15,0,1);   // выскакивает с перелётом и оседает
+        g.save(); g.globalAlpha=t>0.75?(1-t)/0.25:1; g.translate(x0,y0-t*p.size*0.5); g.rotate(tilt*Math.sin(t*6)); g.scale(s,s);
+        g.font=`${p.size}px ${EMOJI_FONT}`; g.textAlign='center'; g.textBaseline='middle'; g.fillText(ch,0,0); g.restore(); })); }},
   emojiRain:{name:'Дождь эмодзи',icon:'🌧️',sound:'whoosh',
     params:{emoji:P.emoji('💀'),count:P.count(45),duration:P.duration(2.5)},
-    run(p,a){ const chars=p.emoji.trim().split(/\s+/).filter(Boolean); if(!chars.length) chars.push('💀');
+    run(p,a){ const chars=emojiTokens(p.emoji,['💀']);
       for(let i=0;i<p.count;i++) fx.push(particle({kind:'emoji',ch:chars[i%chars.length],x:rnd(20,W-20),y:-60,
         vx:rnd(-30,30),vy:rnd(250,520),g:200,life:6,size:rnd(34,70),rot:rnd(-0.5,0.5),vr:rnd(-2,2),delay:rnd(0,p.duration)})); }},
   fireworks:{name:'Салют',icon:'🎆',sound:'boom',
@@ -194,7 +294,7 @@ const EFFECTS = {
           if(y<=ty+4){ this.boom=true; this.life=this.age; for(let k=0;k<90;k++){ const ang=rnd(0,6.283), sp=rnd(150,520);
             fx.push(particle({kind:k%3?'dot':'spark',x,y,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,g:220,drag:1.4,life:rnd(1,1.8),
               r:rnd(1.5,3.2),color:`hsl(${hue+rnd(-25,25)},100%,${rnd(55,75)}%)`,shrink:true,fade:0.8})); } } })); } }},
-  burst:{name:'Взрыв частиц',icon:'💥',sound:'whoosh',
+  burst:{name:'Взрыв частиц',icon:'💥',sound:'whoosh',anchored:true,
     params:{color:P.color('#34e1ff'),count:P.count(130)},
     run(p,a){ for(let i=0;i<p.count;i++){ const ang=rnd(0,6.283), sp=rnd(250,950);
         fx.push(particle({kind:i%2?'dot':'spark',x:a.x,y:a.y,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,drag:2.6,life:rnd(0.6,1.3),r:rnd(1.5,4),color:p.color,shrink:true})); }
@@ -224,10 +324,10 @@ const EFFECTS = {
   shake:{name:'Тряска',icon:'🫨',sound:'boom',
     params:{intensity:{label:'Сила, px',type:'number',def:22},duration:P.duration(0.6)},
     run(p){ cam.shakeUntil=now()+p.duration*1000; cam.shakeDur=p.duration*1000; cam.shakeAmp=p.intensity; }},
-  zoom:{name:'Зум-удар',icon:'🔍',sound:'whoosh',
+  zoom:{name:'Зум-удар',icon:'🔍',sound:'whoosh',anchored:true,
     params:{amount:{label:'Сила (0–1)',type:'number',def:0.35},duration:P.duration(0.8)},
     run(p,a){ cam.zoom={start:now(),dur:p.duration*1000,x:a.x,y:a.y,amount:p.amount}; }},
-  lightning:{name:'Молния',icon:'🌩️',sound:'zap',
+  lightning:{name:'Молния',icon:'🌩️',sound:'zap',anchored:true,
     params:{color:P.color('#9ad7ff'),bolts:{label:'Разрядов',type:'number',def:3}},
     run(p,a){ for(let b=0;b<p.bolts;b++){ const pts=bolt(rnd(W*0.1,W*0.9),-10,a.x+rnd(-30,30),a.y,5);
         fx.push(entity(0.55,function(){ if(this.age<b*0.07||Math.floor(this.age*28)%3===2) return;
@@ -240,10 +340,10 @@ const EFFECTS = {
     params:{count:P.count(160),duration:P.duration(6)},
     run(p){ for(let i=0;i<p.count;i++) fx.push(particle({kind:'dot',x:rnd(0,W),y:-10,vx:rnd(-20,20),vy:rnd(40,110),life:12,r:rnd(1.5,4.5),
         color:'rgba(255,255,255,.9)',delay:rnd(0,p.duration),fade:1.5})); }},
-  trail:{name:'Шлейф за пальцем',icon:'✨',sound:'none',
+  trail:{name:'Шлейф за пальцем',icon:'✨',sound:'none',anchored:true,
     params:{color:P.color('#ffd84a'),duration:P.duration(2.5)},
-    run(p,a,gid){ let pos={x:a.x,y:a.y};
-      fx.push(entity(p.duration,null,function(){ const t=tips.get(gid); if(t) pos=t;
+    run(p,a,src){ let pos={x:a.x,y:a.y};
+      fx.push(entity(p.duration,null,function(){ const t=tips.get(src); if(t) pos=t;
         for(let i=0;i<4;i++) fx.push(particle({kind:'dot',x:pos.x+rnd(-6,6),y:pos.y+rnd(-6,6),vx:rnd(-60,60),vy:rnd(-60,40),g:120,drag:1,
           life:rnd(0.4,0.9),r:rnd(1.5,4),color:Math.random()<0.3?'#ffffff':p.color,shrink:true,fade:0.4})); })); }},
 
@@ -413,7 +513,7 @@ function defaultRules(){
 function defaultConfig(){
   return {version:1,
     settings:{mirror:false,showCamera:false,showSkeleton:false,showHud:true,input:'obs',obsSource:'',shotFps:10,shotWidth:640,camWidth:1280,camHeight:720,deviceId:'',
-      minScore:0.6,customPriority:true,volume:0.5,gpu:true,
+      minScore:0.6,customPriority:true,volume:0.5,gpu:true,skinTone:0,
       obsWs:{enabled:true,url:'ws://127.0.0.1:4455',password:''}},
     customGestures:[], rules:defaultRules()};
 }
@@ -555,53 +655,72 @@ function isFingerHeart(lm){
   const folded=(tip,joint)=>d(0,tip)<d(0,joint)*1.12;
   return d(4,8)<palm*0.38 && d(0,4)>palm*0.65 && d(0,8)>palm*0.85 && folded(12,10) && folded(16,14) && folded(20,18);
 }
+// Имена рук для раздельного срабатывания: 'L'/'R' по handedness модели; если она назвала обе руки одинаково —
+// различаем по положению в кадре. Жест двумя руками — 'LR'.
+function handKeys(){
+  const keys=hands.map(h=>h.handed==='Left'?'L':'R');
+  if(keys.length===2&&keys[0]===keys[1]){ const l=hands[0].lm[0].x<hands[1].lm[0].x?0:1; keys[l]='L'; keys[1-l]='R'; }
+  return keys;
+}
 function computeActive(){
-  const act=new Map(); const s=cfg.settings;
-  const put=(id,center,tip,score)=>{ const cur=act.get(id); if(!cur||score>cur.score) act.set(id,{anchor:center,tip,score}); };
+  const act=new Map(); const s=cfg.settings;   // gestureId -> [{hand,anchor,tip,score}], по экземпляру на каждую руку
+  const put=(id,hand,anchor,tip,score)=>{ let arr=act.get(id); if(!arr) act.set(id,arr=[]);
+    const cur=arr.find(x=>x.hand===hand); if(!cur) arr.push({hand,anchor,tip,score}); else if(score>cur.score) Object.assign(cur,{anchor,tip,score}); };
   liveDist.clear();
-  for(const h of hands){
-    let customHit=false;
+  const keys=handKeys();
+  hands.forEach((h,i)=>{
+    const hk=keys[i]; let customHit=false;
     for(const cg of cfg.customGestures){ if(cg.hands!==1||!cg.samples.length) continue;
       const d=nearest(cg,h.feat.f); liveDist.set(cg.id,Math.min(d,liveDist.get(cg.id)??Infinity));
-      if(d<cg.threshold){ put('c:'+cg.id,h.center,h.tip,1-d); customHit=true; } }
+      if(d<cg.threshold){ put('c:'+cg.id,hk,h.center,h.tip,1-d); customHit=true; } }
     if(!(s.customPriority&&customHit) && isFingerHeart(h.lm)){
-      const a=toScreen(h.lm[4]), b=toScreen(h.lm[8]); put('Finger_Heart',{x:(a.x+b.x)/2,y:(a.y+b.y)/2},h.tip,1); continue; }
+      const a=toScreen(h.lm[4]), b=toScreen(h.lm[8]); put('Finger_Heart',hk,{x:(a.x+b.x)/2,y:(a.y+b.y)/2},h.tip,1); return; }
     if(h.builtin && h.builtin.name!=='None' && h.builtin.score>=s.minScore && !(s.customPriority&&customHit))
-      put(h.builtin.name,h.center,h.tip,h.builtin.score);
-  }
+      put(h.builtin.name,hk,h.center,h.tip,h.builtin.score);
+  });
   if(hands.length>=2){
     const [a,b]=hands; const mid={x:(a.center.x+b.center.x)/2,y:(a.center.y+b.center.y)/2};
     const tipMid={x:(a.tip.x+b.tip.x)/2,y:(a.tip.y+b.tip.y)/2};
     // встроенное правило: сердце двумя руками
     const sc=(a.feat.sc+b.feat.sc)/2, dist=(p,q)=>Math.hypot((p.x-q.x)*aspect,p.y-q.y);
     if(dist(a.lm[8],b.lm[8])<0.75*sc && dist(a.lm[4],b.lm[4])<0.75*sc && a.lm[8].y<a.lm[4].y && b.lm[8].y<b.lm[4].y &&
-       dist(a.lm[8],a.lm[4])>0.5*sc) put('Two_Hand_Heart',{x:(toScreen(a.lm[8]).x+toScreen(b.lm[4]).x)/2,y:toScreen(a.lm[6]).y},tipMid,1);
+       dist(a.lm[8],a.lm[4])>0.5*sc) put('Two_Hand_Heart','LR',{x:(toScreen(a.lm[8]).x+toScreen(b.lm[4]).x)/2,y:toScreen(a.lm[6]).y},tipMid,1);
     const f2=twoHandFeature(a,b);
     for(const cg of cfg.customGestures){ if(cg.hands!==2||!cg.samples.length) continue;
-      const d=nearest(cg,f2); liveDist.set(cg.id,d); if(d<cg.threshold) put('c:'+cg.id,mid,tipMid,1-d); }
+      const d=nearest(cg,f2); liveDist.set(cg.id,d); if(d<cg.threshold) put('c:'+cg.id,'LR',mid,tipMid,1-d); }
   }
   return act;
 }
 
 // ====================== Правила: удержание и кулдаун ======================
-const ruleState=new Map();
-let activeNow=new Map();
-function fireRule(rule, anchor, gid){
+const ruleState=new Map();   // rule.id -> Map(рука -> {since,lost,fired,last})
+let activeNow=new Map();     // gestureId -> [{hand,anchor,tip,score}]
+// Правило срабатывает с каждой руки отдельно, если эффект привязан к руке и в правиле это не выключено.
+// Экранные эффекты и действия OBS срабатывают один раз, от руки с лучшим счётом.
+const perHand = rule => rule.perHand!==false && !!EFFECTS[rule.effect]?.anchored;
+const bestOf = arr => arr.reduce((b,a)=>a.score>b.score?a:b);
+function fireRule(rule, anchor, src){
   const e=EFFECTS[rule.effect]; if(!e) return;
-  try{ e.run(ruleParams(rule), anchor||{x:W/2,y:H/2}, gid||rule.gesture); }catch(err){ console.error(err); }
+  try{ e.run(ruleParams(rule), anchor||{x:W/2,y:H/2}, src||rule.gesture); }catch(err){ console.error(err); }
   playSound(rule.sound);
 }
 function processRules(t){
   activeNow=computeActive();
-  for(const [id,a] of activeNow) tips.set(id,a.tip);
+  for(const [id,arr] of activeNow){ for(const a of arr) tips.set(id+'@'+a.hand,a.tip); tips.set(id,bestOf(arr).tip); }
   for(const rule of cfg.rules){
     if(!rule.enabled) continue;
-    let st=ruleState.get(rule.id); if(!st){ st={since:null,lost:null,fired:false,last:-1e9}; ruleState.set(rule.id,st); }
-    const a=activeNow.get(rule.gesture);
-    if(a){
+    let states=ruleState.get(rule.id); if(!states){ states=new Map(); ruleState.set(rule.id,states); }
+    const arr=activeNow.get(rule.gesture)||[];
+    const inst=!arr.length?[] : perHand(rule)?arr.map(a=>[a.hand,a,rule.gesture+'@'+a.hand]) : [['*',bestOf(arr),rule.gesture]];
+    const seen=new Set();
+    for(const [hk,a,src] of inst){
+      seen.add(hk);
+      let st=states.get(hk); if(!st){ st={since:null,lost:null,fired:false,last:-1e9}; states.set(hk,st); }
       st.lost=null; if(st.since==null) st.since=t;
-      if(t-st.since>=rule.hold && t-st.last>=rule.cooldown && (rule.repeat||!st.fired)){ fireRule(rule,a.anchor,rule.gesture); st.last=t; st.fired=true; }
-    }else if(st.since!=null){
+      if(t-st.since>=rule.hold && t-st.last>=rule.cooldown && (rule.repeat||!st.fired)){ fireRule(rule,a.anchor,src); st.last=t; st.fired=true; }
+    }
+    for(const [hk,st] of states){
+      if(seen.has(hk)||st.since==null) continue;
       if(st.lost==null) st.lost=t;
       if(t-st.lost>220){ st.since=null; st.lost=null; st.fired=false; }  // небольшая «терпимость» к морганию детекции
     }
@@ -694,7 +813,7 @@ const obsMode=new URLSearchParams(location.search).has('obs');
 function updateHud(){
   const hud=$('#hud'); const show=cfg.settings.showHud&&!(obsMode&&$('#panel').classList.contains('hidden'));
   hud.classList.toggle('hidden',!show);
-  if(show){ const names=[...activeNow.keys()].map(gestureLabel).join(', ')||'—';
+  if(show){ const names=[...activeNow].map(([id,arr])=>gestureLabel(id)+(arr.length>1?` ×${arr.length}`:'')).join(', ')||'—';
     hud.textContent=`FPS ${fps.toFixed(0)} · детект ${detRate.toFixed(0)}/с · рук: ${hands.length}${cfg.settings.obsWs.enabled?(obs.ready?' · OBS ✓':' · OBS ✗'):''}\nЖесты: ${names}`; }
   if(curTab==='custom') for(const cg of cfg.customGestures){ const e=document.getElementById('ld-'+cg.id); if(!e) continue;
     const d=liveDist.get(cg.id); e.textContent=d==null||!isFinite(d)?'сейчас: —':`сейчас: ${d.toFixed(2)}`; e.classList.toggle('hit',d<cg.threshold); }
@@ -720,7 +839,35 @@ function gestureSelect(value,onchange){
   if(!BUILTIN[value]&&!cfg.customGestures.some(c=>'c:'+c.id===value)) s.prepend(el('option',{value,selected:true},'(удалённый жест)'));
   return s;
 }
+let pickerGroup=0;
+function emojiField(val,onchange){
+  const wrap=el('div',{class:'efield'});
+  const inp=el('input',{type:'text',class:'grow',value:val,placeholder:'любые эмодзи, пробелы не обязательны',oninput:e=>set(e.target.value,false)});
+  const chips=el('div',{class:'chips'}), pick=el('div',{class:'hidden'});
+  const set=(v,sync=true)=>{ val=v; if(sync) inp.value=v; onchange(v); renderChips(); };
+  function renderChips(){ chips.innerHTML=''; const toks=emojiTokens(val);
+    toks.forEach((tk,i)=>chips.append(el('span',{class:'chip',title:'Убрать',onclick:()=>set(toks.filter((_,j)=>j!==i).join(' '))},tk))); }
+  const tabs=el('div',{class:'etabs'}), grid=el('div',{class:'egrid'}), note=el('div',{class:'hint'});
+  EMOJI_GROUPS.forEach(([icon,name],i)=>tabs.append(el('button',{class:'b',title:name,onclick:()=>{pickerGroup=i;renderGrid();}},icon)));
+  const toneSel=el('select',{title:'Оттенок кожи',onchange:e=>{cfg.settings.skinTone=+e.target.value;save();renderGrid();}});
+  TONES.forEach((t,i)=>toneSel.append(el('option',{value:i,selected:i===(cfg.settings.skinTone||0)},'✋'+t)));
+  tabs.append(el('span',{class:'grow'}),toneSel);
+  function renderGrid(){
+    [...tabs.querySelectorAll('button')].forEach((b,i)=>b.classList.toggle('on',i===pickerGroup));
+    const {list,hidden}=groupEmoji(pickerGroup,TONES[cfg.settings.skinTone||0]);
+    grid.innerHTML=''; for(const e of list) grid.append(el('button',{title:e},e));
+    note.textContent=hidden?`${hidden} эмодзи скрыто — этот шрифт их не рисует`:'';
+  }
+  grid.onclick=e=>{ const b=e.target.closest('button'); if(b) set(val.trim()?val.trimEnd()+' '+b.textContent:b.textContent); };
+  pick.append(tabs,grid,note);
+  wrap.append(el('div',{class:'row'},inp,
+    el('button',{class:'b i',title:'Выбрать из всех эмодзи',onclick:()=>{ pick.classList.toggle('hidden'); if(!pick.classList.contains('hidden')) renderGrid(); }},'😀')),chips);
+  wrap.picker=pick;   // пикер вставляется под строкой на всю ширину карточки (см. renderRules)
+  renderChips();
+  return wrap;
+}
 function paramInput(spec,val,onchange){
+  if(spec.type==='emoji') return emojiField(val,onchange);
   if(spec.type==='select'){ const s=el('select',{onchange:e=>onchange(e.target.value)});
     for(const [k,l] of Object.entries(spec.options)) s.append(el('option',{value:k,selected:k===val},l)); return s; }
   if(spec.type==='number') return el('input',{type:'number',step:'any',value:val,onchange:e=>onchange(parseFloat(e.target.value)||0)});
@@ -729,7 +876,7 @@ function paramInput(spec,val,onchange){
 }
 function renderRules(){
   const root=$('#tab-rules'); root.innerHTML='';
-  root.append(el('p',{class:'hint'},'Жест → эффект. «Удержание» — сколько держать жест до срабатывания, «Кулдаун» — пауза до следующего раза. На один жест можно повесить несколько правил.'));
+  root.append(el('p',{class:'hint'},'Жест → эффект. «Удержание» — сколько держать жест до срабатывания, «Кулдаун» — пауза до следующего раза. На один жест можно повесить несколько правил. Жесты видны на обеих руках: эффекты, привязанные к руке (конфетти, сердечки, реакция, взрыв…), срабатывают из каждой руки отдельно — два 👍 дадут два залпа.'));
   cfg.rules.forEach((rule,idx)=>{
     const e=EFFECTS[rule.effect]; const p=ruleParams(rule);
     const card=el('div',{class:'card'+(rule.enabled?'':' off')});
@@ -741,8 +888,11 @@ function renderRules(){
     const effSel=el('select',{class:'grow',onchange:ev=>{rule.effect=ev.target.value;rule.params={};rule.sound=EFFECTS[rule.effect].sound;save();renderRules();}});
     for(const [id,x] of Object.entries(EFFECTS)) effSel.append(el('option',{value:id,selected:id===rule.effect},`${x.icon} ${x.name}`));
     card.append(el('div',{class:'row'},el('label',{},'Эффект'),effSel));
-    for(const [k,spec] of Object.entries(e?.params||{}))
-      card.append(el('div',{class:'row'},el('label',{},spec.label),paramInput(spec,p[k],v=>{rule.params={...rule.params,[k]:v};save();})));
+    for(const [k,spec] of Object.entries(e?.params||{})){
+      const ctl=paramInput(spec,p[k],v=>{rule.params={...rule.params,[k]:v};save();});
+      card.append(el('div',{class:'row'},el('label',{style:ctl.picker?'align-self:flex-start;margin-top:6px':null},spec.label),ctl));
+      if(ctl.picker) card.append(ctl.picker);
+    }
     const snd=el('select',{onchange:ev=>{rule.sound=ev.target.value;save();}});
     for(const [k,l] of Object.entries(SOUNDS)) snd.append(el('option',{value:k,selected:k===rule.sound},l));
     card.append(el('div',{class:'row'},el('label',{},'Звук'),snd));
@@ -751,6 +901,9 @@ function renderRules(){
       el('span',{class:'hint'},'Кулдаун'),el('input',{type:'number',value:rule.cooldown,onchange:ev=>{rule.cooldown=+ev.target.value||0;save();}})));
     card.append(el('div',{class:'row'},el('label',{},''),
       el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:rule.repeat,onchange:ev=>{rule.repeat=ev.target.checked;save();}}),' повторять, пока держу жест')));
+    if(e?.anchored) card.append(el('div',{class:'row'},el('label',{},''),
+      el('label',{style:'min-width:0;color:var(--text)',title:'Один и тот же жест двумя руками — эффект из каждой руки'},
+        el('input',{type:'checkbox',checked:rule.perHand!==false,onchange:ev=>{rule.perHand=ev.target.checked;save();}}),' с каждой руки отдельно')));
     root.append(card);
   });
   root.append(el('div',{class:'row'},
@@ -795,6 +948,7 @@ function renderLibrary(){
   root.append(grid);
   root.append(el('h3',{},'Встроенные жесты'));
   root.append(el('p',{class:'hint'},Object.values(BUILTIN).map(b=>`${b.icon} ${b.name}`).join(' · ')));
+  root.append(el('p',{class:'hint'},'Распознаются на обеих руках одновременно: разные жесты на разных руках запускают свои правила, одинаковый жест двумя руками — эффект из каждой руки (если в правиле включено «с каждой руки отдельно»).'));
   root.append(el('h3',{},'Дефолтный набор'));
   root.append(el('p',{class:'hint'},'👍 конфетти · 👎 дождь 💀 · ✌️ неон-рамка · ✋ взрыв · ✊ молния + тряска · ☝️ шлейф · 🤟 «СПАСИБО, ЧАТ!» · 🫶 и 🫰 сердечки'));
   root.append(el('div',{class:'row'},
@@ -887,6 +1041,10 @@ function importConfig(text){
 function renderAll(){ renderRules(); renderCustom(); renderLibrary(); renderSettings(); }
 
 // ====================== Старт ======================
+// Для консоли: GFX.fire('reaction',{emoji:'🔥'}), GFX.emojiTokens('👨‍👩‍👧🇷🇺'), GFX.cfg()
+window.GFX={cfg:()=>cfg,effects:EFFECTS,fire:(effect,params={},anchor)=>fireRule({effect,params,sound:'none'},anchor),
+  emojiTokens,withTone,emojiRenders,groupEmoji,
+  _test:{setHands:h=>{hands=h;},computeActive,processRules,handFeature,toScreen,rules:()=>cfg.rules,fx}};
 document.body.classList.toggle('solid', !obsMode);
 if(obsMode) $('#gear').classList.add('hidden');
 renderAll();
