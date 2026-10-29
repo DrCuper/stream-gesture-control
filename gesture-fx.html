@@ -78,6 +78,13 @@
   .mgrid .card{margin:0;display:flex;flex-direction:column;gap:4px}
   .mgrid .mth{width:100%;height:90px;object-fit:contain;background:#1b1d27;border-radius:6px}
   .mname{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tabs button{padding:10px 2px;font-size:12px}
+  /* живые полоски значений («ручки», порог своих жестов) */
+  .bar{position:relative;height:6px;border-radius:3px;background:#232633;flex:1;min-width:60px;overflow:hidden}
+  .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);width:0}
+  .bar.on i{background:var(--ok)}
+  .steps{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+  .steps select{max-width:150px}
 </style>
 </head>
 <body>
@@ -90,12 +97,14 @@
   <header><b>Gesture FX</b><span class="pill">H — скрыть</span><button class="b i" id="close">✕</button></header>
   <div class="tabs">
     <button data-tab="rules" class="on">Правила</button>
-    <button data-tab="custom">Мои жесты</button>
+    <button data-tab="custom">Жесты</button>
+    <button data-tab="knobs">Ручки</button>
     <button data-tab="library">Библиотека</button>
     <button data-tab="settings">Настройки</button>
   </div>
   <div class="body" id="tab-rules"></div>
   <div class="body hidden" id="tab-custom"></div>
+  <div class="body hidden" id="tab-knobs"></div>
   <div class="body hidden" id="tab-library"></div>
   <div class="body hidden" id="tab-settings"></div>
 </div>
@@ -107,20 +116,46 @@
 const MP_VER = '1.2.0';
 const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
 const MODEL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
+const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const POSE_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
 const STORE_KEY = 'gesturefx.config.v1';
 const EMOJI_FONT = '"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
 
+// group: hand — поза руки, dyn — движение руки, face — лицо (нужна модель лица), pose — тело (модель позы).
+// event — одноразовое событие (свайп, кивок…): срабатывает сразу, «удержание» в правиле не используется.
 const BUILTIN = {
-  Thumb_Up:       {name:'Палец вверх',        icon:'👍'},
-  Thumb_Down:     {name:'Палец вниз',         icon:'👎'},
-  Victory:        {name:'Виктори',            icon:'✌️'},
-  Open_Palm:      {name:'Ладонь',             icon:'✋'},
-  Closed_Fist:    {name:'Кулак',              icon:'✊'},
-  Pointing_Up:    {name:'Указательный вверх', icon:'☝️'},
-  ILoveYou:       {name:'Я тебя люблю',       icon:'🤟'},
-  Two_Hand_Heart: {name:'Сердце двумя руками',icon:'🫶'},
-  Finger_Heart:   {name:'Сердечко пальцами',  icon:'🫰'},
+  Thumb_Up:       {name:'Палец вверх',        icon:'👍', group:'hand'},
+  Thumb_Down:     {name:'Палец вниз',         icon:'👎', group:'hand'},
+  Victory:        {name:'Виктори',            icon:'✌️', group:'hand'},
+  Open_Palm:      {name:'Ладонь',             icon:'✋', group:'hand'},
+  Closed_Fist:    {name:'Кулак',              icon:'✊', group:'hand'},
+  Pointing_Up:    {name:'Указательный вверх', icon:'☝️', group:'hand'},
+  ILoveYou:       {name:'Я тебя люблю',       icon:'🤟', group:'hand'},
+  Finger_Heart:   {name:'Сердечко пальцами',  icon:'🫰', group:'hand'},
+  Two_Hand_Heart: {name:'Сердце двумя руками',icon:'🫶', group:'hand'},
+  Swipe_Left:     {name:'Свайп влево',        icon:'👈', group:'dyn', event:true},
+  Swipe_Right:    {name:'Свайп вправо',       icon:'👉', group:'dyn', event:true},
+  Swipe_Up:       {name:'Свайп вверх',        icon:'👆', group:'dyn', event:true},
+  Swipe_Down:     {name:'Свайп вниз',         icon:'👇', group:'dyn', event:true},
+  Circle_CW:      {name:'Круг по часовой',    icon:'🔃', group:'dyn', event:true},
+  Circle_CCW:     {name:'Круг против часовой',icon:'🔄', group:'dyn', event:true},
+  Throw:          {name:'Бросок (кулак → раскрыть в движении)', icon:'🤾', group:'dyn', event:true},
+  Facepalm:       {name:'Фейспалм (ладонь на лице)', icon:'🤦', group:'face'},
+  Face_MouthOpen: {name:'Открытый рот',       icon:'😮', group:'face'},
+  Face_Smile:     {name:'Улыбка',             icon:'😁', group:'face'},
+  Face_BrowsUp:   {name:'Поднятые брови',     icon:'🤨', group:'face'},
+  Face_Frown:     {name:'Нахмуренные брови',  icon:'😠', group:'face'},
+  Face_Wink:      {name:'Подмигивание',       icon:'😉', group:'face'},
+  Face_Kiss:      {name:'Губы трубочкой',     icon:'😘', group:'face'},
+  Face_Puff:      {name:'Надутые щёки',       icon:'🐡', group:'face'},
+  Face_Nod:       {name:'Кивок',              icon:'↕️', group:'face', event:true},
+  Face_Shake:     {name:'Мотание головой',    icon:'↔️', group:'face', event:true},
+  Pose_Shrug:     {name:'Пожать плечами',     icon:'🤷', group:'pose'},
+  Pose_ArmsCrossed:{name:'Скрещённые руки',   icon:'🙅', group:'pose'},
+  Pose_HandsUp:   {name:'Руки вверх',         icon:'🙌', group:'pose'},
+  Pose_TPose:     {name:'Руки в стороны',     icon:'🤸', group:'pose'},
 };
+const GROUP_NAMES = {hand:'Рука', dyn:'Движение', face:'Лицо', pose:'Тело'};
 
 const SOUNDS = {none:'без звука', pop:'поп', chime:'дзынь', boom:'бум', whoosh:'вжух', zap:'разряд'};
 
@@ -280,6 +315,26 @@ const cam = {shakeUntil:0, shakeAmp:0, shakeDur:1, zoom:null, glitchUntil:0};
 const tips = new Map();   // «жест» или «жест@рука» -> последняя позиция кончика указательного пальца
 const anchors = new Map(); // то же для центра ладони (картинки, следующие за рукой)
 const now = () => performance.now();
+// Живое состояние для эффектов, привязанных к руке/лицу (обновляется при каждой детекции)
+const handLm = new Map();   // 'L'/'R' -> {pts:[21 точка на экране], c:центр ладони, sc:размер ладони px, vx,vy px/с, m:{pinch,spread,roll}, gest, score, t}
+const faceNow = {t:-1e9, pts:null, bs:null, box:null, tilt:0};   // лицо: 478 точек на экране, blendshapes, рамка
+const poseNow = {t:-1e9, pts:null, raw:null};                   // тело: 33 точки на экране и исходные
+const palmCenter = pts => ({x:(pts[0].x+pts[5].x+pts[9].x+pts[13].x+pts[17].x)/5, y:(pts[0].y+pts[5].y+pts[9].y+pts[13].y+pts[17].y)/5});
+// src эффекта — 'Thumb_Up@L' (жест и рука). Рука по src, а без руки — самая свежая в кадре.
+function handOf(src){ const hk=String(src||'').split('@')[1]; let h=hk?handLm.get(hk):null;
+  if(!hk) for(const x of handLm.values()) if(!h||x.t>h.t) h=x;
+  return h&&now()-h.t<400?h:null; }
+function isHeld(src){ const [id,hk]=String(src).split('@'); const arr=activeNow.get(id); return !!arr&&(!hk||arr.some(a=>a.hand===hk)); }
+// Сущность «пока держу жест»: живёт, пока жест активен (и не дольше maxSec; 0 — без предела), потом гаснет за tail с.
+// Запуск кнопкой ▶ без жеста — демо на 2,5 с.
+function heldEntity(src,maxSec,draw,update,tail=0.45){
+  const demo=!activeNow.has(String(src).split('@')[0]);
+  return {age:0,fade:0,held:true,life:Infinity,
+    update(dt){ this.age+=dt; this.held=(isHeld(src)||(demo&&this.age<2.5))&&(!maxSec||this.age<maxSec);
+      this.fade=this.held?Math.min(1,this.fade+dt/0.25):Math.max(0,this.fade-dt/tail);
+      update&&update.call(this,dt); return this.held||this.fade>0; },
+    draw};
+}
 
 const DRAW = {
   confetti(){ g.save(); g.translate(this.x,this.y); g.rotate(this.rot); g.scale(Math.cos(this.age*this.flip),1);
@@ -291,6 +346,8 @@ const DRAW = {
     g.beginPath(); g.arc(this.x,this.y,this.r*(this.shrink?Math.max(0.1,1-this.age/this.life):1),0,Math.PI*2); g.fill(); g.restore(); },
   spark(){ g.save(); g.globalCompositeOperation='lighter'; g.strokeStyle=this.color; g.lineWidth=this.r; g.lineCap='round';
     g.beginPath(); g.moveTo(this.x,this.y); g.lineTo(this.x-this.vx*0.04,this.y-this.vy*0.04); g.stroke(); g.restore(); },
+  flame(){ g.save(); g.globalCompositeOperation='lighter'; g.fillStyle=this.color;   // как dot, но без тени — дёшево для сотен частиц
+    g.beginPath(); g.arc(this.x,this.y,this.r*(this.shrink?Math.max(0.1,1-this.age/this.life):1),0,Math.PI*2); g.fill(); g.restore(); },
 };
 function particle(o){
   o.age=0; o.delay=o.delay||0; o.fade=o.fade??0.6;
@@ -431,6 +488,86 @@ const EFFECTS = {
         for(let i=0;i<4;i++) fx.push(particle({kind:'dot',x:pos.x+rnd(-6,6),y:pos.y+rnd(-6,6),vx:rnd(-60,60),vy:rnd(-60,40),g:120,drag:1,
           life:rnd(0.4,0.9),r:rnd(1.5,4),color:Math.random()<0.3?'#ffffff':p.color,shrink:true,fade:0.4})); })); }},
 
+  // ---------- привязано к руке и живёт, пока держишь жест (held) ----------
+  fingerSparks:{name:'Искры с пальцев',icon:'🖐️',sound:'none',anchored:true,held:true,
+    params:{color:P.color('#ffd84a'),rate:{label:'Интенсивность',type:'number',def:2},duration:{label:'Не дольше, с (0 — пока держу)',type:'number',def:0}},
+    run(p,a,src){ fx.push(heldEntity(src,p.duration,null,function(dt){ const h=handOf(src); if(!h||!this.held) return;
+      const n=Math.max(1,Math.round(p.rate*knobState.intensity));
+      for(const i of [4,8,12,16,20]){ const q=h.pts[i], dx=q.x-h.c.x, dy=q.y-h.c.y, L=Math.hypot(dx,dy)||1;
+        for(let k=0;k<n;k++) fx.push(particle({kind:k%2?'spark':'dot',x:q.x+rnd(-4,4),y:q.y+rnd(-4,4),
+          vx:dx/L*rnd(100,420)+h.vx*0.5+rnd(-60,60),vy:dy/L*rnd(100,420)+h.vy*0.5+rnd(-60,60),g:300,drag:1.5,
+          life:rnd(0.3,0.8),r:rnd(1.2,3),color:Math.random()<0.25?'#ffffff':p.color,shrink:true,fade:0.3})); } })); }},
+  palmFire:{name:'Огонь в ладони',icon:'🔥',sound:'none',anchored:true,held:true,
+    params:{kind:{label:'Пламя',type:'select',options:{fire:'огонь',blue:'синее',green:'зелёное',purple:'фиолетовое'},def:'fire'},
+      size:{label:'Размер (×)',type:'number',def:1},duration:{label:'Не дольше, с (0 — пока держу)',type:'number',def:0}},
+    run(p,a,src){ const PAL={fire:['#fff6b0','#ffd23f','#ff8c1a','#ff3b1a'],blue:['#e8fbff','#7fe7ff','#2aa5ff','#1b4fff'],
+        green:['#f0ffe0','#b6ff5c','#3bce5a','#0e8a3a'],purple:['#fde8ff','#e08cff','#b44dff','#6a1fd0']}, pal=PAL[p.kind]||PAL.fire;
+      fx.push(heldEntity(src,p.duration,function(){ const h=handOf(src); if(!h) return; const R=h.sc*0.9*p.size*this.fade, c=h.c;
+          g.save(); g.globalCompositeOperation='lighter'; g.globalAlpha=0.5*this.fade;
+          const gr=g.createRadialGradient(c.x,c.y,0,c.x,c.y,R); gr.addColorStop(0,pal[1]); gr.addColorStop(1,'rgba(0,0,0,0)');
+          g.fillStyle=gr; g.beginPath(); g.arc(c.x,c.y,R,0,7); g.fill(); g.restore(); },
+        function(dt){ const h=handOf(src); if(!h||!this.held) return; const R=h.sc*0.45*p.size, n=Math.round(6*knobState.intensity*this.fade);
+          for(let i=0;i<n;i++){ const ang=rnd(0,6.28), rr=Math.sqrt(Math.random())*R;
+            fx.push(particle({kind:'flame',x:h.c.x+Math.cos(ang)*rr,y:h.c.y+Math.sin(ang)*rr*0.6,vx:rnd(-40,40)+h.vx*0.3,vy:-rnd(100,320)*p.size+h.vy*0.3,
+              g:-250,drag:1.8,life:rnd(0.3,0.75),r:rnd(3,9)*p.size,color:pal[Math.min(3,Math.floor(Math.random()*Math.random()*4))],shrink:true,fade:0.5})); } })); }},
+  orb:{name:'Шар в ладони',icon:'🔮',sound:'none',anchored:true,held:true,
+    params:{color:P.color('#b44dff'),size:{label:'Размер (×)',type:'number',def:1},duration:{label:'Не дольше, с (0 — пока держу)',type:'number',def:0}},
+    run(p,a,src){ fx.push(heldEntity(src,p.duration,function(){ const h=handOf(src); if(!h) return;
+        const R=h.sc*0.42*p.size*(0.92+0.08*Math.sin(this.age*5))*this.fade, c=h.c; if(R<1) return;
+        g.save(); g.globalCompositeOperation='lighter'; const gr=g.createRadialGradient(c.x-R*0.3,c.y-R*0.3,R*0.1,c.x,c.y,R);
+        gr.addColorStop(0,'#ffffff'); gr.addColorStop(0.35,p.color); gr.addColorStop(1,'rgba(0,0,0,0)'); g.fillStyle=gr; g.beginPath(); g.arc(c.x,c.y,R,0,7); g.fill();
+        g.globalAlpha=0.35*this.fade; g.strokeStyle=p.color; g.lineWidth=2; g.shadowColor=p.color; g.shadowBlur=25; g.beginPath(); g.arc(c.x,c.y,R*1.25,0,7); g.stroke(); g.restore(); },
+      function(dt){ const h=handOf(src); if(!h||!this.held) return; const R=h.sc*0.5*p.size;
+        for(let i=0;i<2;i++){ const ang=this.age*4+i*3.14; fx.push(particle({kind:'dot',x:h.c.x+Math.cos(ang)*R,y:h.c.y+Math.sin(ang)*R*0.6,
+          vx:h.vx*0.5,vy:h.vy*0.5-rnd(20,80),life:0.5,r:2.5,color:'#ffffff',shrink:true,fade:0.3})); } })); }},
+  handLightning:{name:'Молния между руками',icon:'⚡',sound:'zap',anchored:true,twoHands:true,held:true,
+    params:{color:P.color('#9ad7ff'),duration:{label:'Не дольше, с (0 — пока держу)',type:'number',def:0}},
+    run(p,a,src){ let segs=[], nextT=0;
+      fx.push(heldEntity(src,p.duration,function(){ if(!segs.length) return; g.save(); g.globalCompositeOperation='lighter'; g.globalAlpha=this.fade; g.lineJoin='round';
+          for(const seg of segs) for(const [w,c,bl] of [[7,p.color,30],[2.5,'#ffffff',6]]){ g.lineWidth=w; g.strokeStyle=c; g.shadowColor=p.color; g.shadowBlur=bl;
+            g.beginPath(); g.moveTo(seg[0][0],seg[0][1]); for(const q of seg) g.lineTo(q[0],q[1]); g.stroke(); }
+          g.restore(); },
+        function(dt){ const tn=now(); if(tn<nextT) return; nextT=tn+45; segs=[];
+          const L=handLm.get('L'), R=handLm.get('R'), fresh=h=>h&&tn-h.t<400;
+          if(fresh(L)&&fresh(R)){ segs.push(bolt(L.c.x,L.c.y,R.c.x,R.c.y,5)); if(Math.random()<0.5) segs.push(bolt(L.pts[8].x,L.pts[8].y,R.pts[8].x,R.pts[8].y,4)); }
+          else { const h=handOf(src); if(!h) return; const T=[4,8,12,16,20];   // одна рука — дуги между пальцами
+            for(let i=0;i<3;i++){ const a=h.pts[T[Math.floor(rnd(0,5))]], b=h.pts[T[Math.floor(rnd(0,5))]]; if(a!==b) segs.push(bolt(a.x,a.y,b.x,b.y,3)); } }
+          if(this.held&&Math.random()<0.3) for(const seg of segs){ const q=seg[Math.floor(seg.length/2)];
+            fx.push(particle({kind:'spark',x:q[0],y:q[1],vx:rnd(-200,200),vy:rnd(-200,200),drag:3,life:0.3,r:2,color:'#ffffff',fade:0.2})); } })); }},
+  neonHand:{name:'Неон-контур руки',icon:'🩻',sound:'none',anchored:true,held:true,
+    params:{color:P.color('#34e1ff'),duration:{label:'Не дольше, с (0 — пока держу)',type:'number',def:0}},
+    run(p,a,src){ fx.push(heldEntity(src,p.duration,function(){ const h=handOf(src); if(!h) return; g.save(); g.globalAlpha=this.fade; g.globalCompositeOperation='lighter';
+        g.lineCap='round'; g.lineJoin='round'; for(const [w,c,bl] of [[10,p.color,30],[3,'#ffffff',6]]){ g.lineWidth=w; g.strokeStyle=c; g.shadowColor=p.color; g.shadowBlur=bl;
+          g.beginPath(); for(const [i,j] of BONES){ g.moveTo(h.pts[i].x,h.pts[i].y); g.lineTo(h.pts[j].x,h.pts[j].y); } g.stroke(); } g.restore(); })); }},
+  fireball:{name:'Фаерболл (летит по направлению броска)',icon:'☄️',sound:'whoosh',anchored:true,
+    params:{color:P.color('#ff8c1a'),speed:{label:'Скорость, px/с',type:'number',def:1400},size:{label:'Размер, px',type:'number',def:28}},
+    run(p,a){ let d=a.dir; if(!d||!(Math.hypot(d.x,d.y)>0.03)) d={x:a.x<W/2?1:-1,y:-0.25};   // без направления (не бросок) — в сторону от руки
+      const L=Math.hypot(d.x,d.y), vx=d.x/L*p.speed, vy=d.y/L*p.speed; let x=a.x, y=a.y, boom=false;
+      fx.push(entity(4,function(){ if(boom) return; g.save(); g.globalCompositeOperation='lighter'; const gr=g.createRadialGradient(x,y,0,x,y,p.size);
+          gr.addColorStop(0,'#ffffff'); gr.addColorStop(0.4,p.color); gr.addColorStop(1,'rgba(0,0,0,0)'); g.fillStyle=gr; g.beginPath(); g.arc(x,y,p.size,0,7); g.fill(); g.restore(); },
+        function(dt){ if(boom) return; x+=vx*dt; y+=vy*dt;
+          for(let i=0;i<5;i++) fx.push(particle({kind:'flame',x:x+rnd(-6,6),y:y+rnd(-6,6),vx:-vx*0.1+rnd(-60,60),vy:-vy*0.1+rnd(-60,60),life:rnd(0.25,0.6),
+            r:rnd(4,p.size*0.6),color:Math.random()<0.5?p.color:'#ffd23f',shrink:true,fade:0.4}));
+          if(x<-p.size||x>W+p.size||y<-p.size||y>H+p.size){ boom=true; this.life=this.age; const bx=clamp(x,0,W), by=clamp(y,0,H);
+            for(let k=0;k<80;k++){ const ang=rnd(0,6.283), sp=rnd(150,700); fx.push(particle({kind:k%2?'dot':'spark',x:bx,y:by,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,
+              drag:2.2,g:300,life:rnd(0.5,1.1),r:rnd(1.5,4),color:k%3?p.color:'#ffffff',shrink:true})); }
+            cam.shakeUntil=now()+250; cam.shakeDur=250; cam.shakeAmp=12; playSound('boom'); } })); }},
+  laserEyes:{name:'Лазеры из глаз (нужна модель лица)',icon:'👀',sound:'zap',anchored:true,held:true,
+    params:{color:P.color('#ff2d2d'),duration:{label:'Не дольше, с (0 — пока держу)',type:'number',def:0}},
+    run(p,a,src){ fx.push(heldEntity(src,p.duration,function(){ const f=faceNow; if(!f.pts||now()-f.t>500) return;
+        const eyes=[f.pts[468]||f.pts[159],f.pts[473]||f.pts[386]], mid={x:(f.pts[33].x+f.pts[263].x)/2,y:(f.pts[33].y+f.pts[263].y)/2}, nose=f.pts[1];
+        let dx=(nose.x-mid.x)*2, dy=Math.max(0.3,nose.y-mid.y); const n=Math.hypot(dx,dy)||1; dx/=n; dy/=n;   // луч вперёд-вниз, в сторону поворота головы
+        const len=Math.max(W,H)*1.5, fl=0.85+0.15*Math.random();
+        g.save(); g.globalCompositeOperation='lighter'; g.globalAlpha=this.fade*fl; g.lineCap='round';
+        for(const e of eyes){ for(const [w,c,bl] of [[f.box.w*0.12,p.color,40],[f.box.w*0.035,'#ffffff',8]]){ g.lineWidth=w; g.strokeStyle=c; g.shadowColor=p.color; g.shadowBlur=bl;
+            g.beginPath(); g.moveTo(e.x,e.y); g.lineTo(e.x+dx*len,e.y+dy*len); g.stroke(); }
+          g.fillStyle='#fff'; g.shadowColor=p.color; g.shadowBlur=30; g.beginPath(); g.arc(e.x,e.y,f.box.w*0.07,0,7); g.fill(); }
+        g.restore(); })); }},
+  emotes:{name:'Выпустить эмоуты (физика)',icon:'🫧',sound:'pop',anchored:true,
+    params:{emoji:P.emoji('😂 🔥 💀 👏'),count:P.count(6),size:{label:'Размер, px (0 — из настроек)',type:'number',def:0}},
+    run(p,a){ const chars=emojiTokens(p.emoji,['😂']); for(let i=0;i<p.count;i++){ const ang=rnd(-2.6,-0.5), sp=rnd(300,800);
+        physSpawn({ch:chars[i%chars.length],x:a.x+rnd(-20,20),y:a.y+rnd(-20,20),vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,size:p.size||0}); } }},
+
   // ---------- действия в OBS (через obs-websocket) ----------
   obsScene:{name:'OBS: сменить сцену',icon:'🎬',sound:'none',obs:true,
     params:{scene:{label:'Сцена',type:'text',def:'',list:'dl-obs-scenes'},back:{label:'Вернуть через, с (0 — нет)',type:'number',def:0}},
@@ -487,7 +624,7 @@ function audio(){ if(!actx){ try{ actx=new (window.AudioContext||window.webkitAu
   if(actx.state==='suspended') actx.resume(); return actx; }
 function playSound(name){
   if(!name||name==='none') return; const a=audio(); if(!a) return;
-  const t=a.currentTime, out=a.createGain(); out.gain.value=cfg.settings.volume; out.connect(a.destination);
+  const t=a.currentTime, out=a.createGain(); out.gain.value=cfg.settings.volume*knobState.volume; out.connect(a.destination);
   const tone=(type,f0,f1,dur,vol=0.6,delay=0)=>{ const o=a.createOscillator(), gn=a.createGain(); o.type=type;
     o.frequency.setValueAtTime(f0,t+delay); o.frequency.exponentialRampToValueAtTime(f1,t+delay+dur);
     gn.gain.setValueAtTime(vol,t+delay); gn.gain.exponentialRampToValueAtTime(0.001,t+delay+dur);
@@ -596,16 +733,23 @@ function defaultRules(){
 }
 function defaultConfig(){
   return {version:1,
-    settings:{mirror:false,showCamera:false,showSkeleton:false,showHud:true,input:'obs',obsSource:'',shotFps:10,shotWidth:640,camWidth:1280,camHeight:720,deviceId:'',
-      minScore:0.6,customPriority:true,volume:0.5,gpu:true,skinTone:0,
+    settings:{mirror:false,showCamera:false,showSkeleton:false,showHud:true,debug:false,input:'obs',obsSource:'',shotFps:10,shotWidth:640,camWidth:1280,camHeight:720,deviceId:'',
+      minScore:0.6,customPriority:true,knn:true,stableFrames:1,volume:0.5,gpu:true,skinTone:0,
+      face:false,pose:false,faceSens:0.5,poseSens:0.5,modelEvery:1,
+      dyn:{enabled:true,swipeDist:0.22,swipeTime:500,circleTime:1400,throwSpeed:1.2},
+      phys:{enabled:true,gravity:0,size:72,life:14,max:60,bounce:0.8,catchFist:true},
+      chat:{twitch:'',emotes:true,emoji:true,perMsg:4},
       obsWs:{enabled:true,url:'ws://127.0.0.1:4455',password:''}},
-    customGestures:[], rules:defaultRules()};
+    customGestures:[], knobs:[], rules:defaultRules()};
 }
+// настройки сливаются с дефолтами на глубину вложенных объектов (obsWs, dyn, phys, chat) — старый конфиг получает новые поля
+function mergeSettings(d,c){ const out={...d,...(c||{})};
+  for(const k of Object.keys(d)) if(d[k]&&typeof d[k]==='object'&&!Array.isArray(d[k])) out[k]={...d[k],...((c||{})[k]||{})};
+  return out; }
 function loadConfig(){
   const d=defaultConfig();
   try{ const raw=localStorage.getItem(STORE_KEY); if(raw){ const c=JSON.parse(raw);
-    const out={...d,...c,settings:{...d.settings,...(c.settings||{})},customGestures:c.customGestures||[],rules:c.rules||d.rules};
-    out.settings.obsWs={...d.settings.obsWs,...(out.settings.obsWs||{})}; return out; } }catch{}
+    return {...d,...c,settings:mergeSettings(d.settings,c.settings),customGestures:c.customGestures||[],knobs:Array.isArray(c.knobs)?c.knobs:[],rules:c.rules||d.rules}; } }catch{}
   return d;
 }
 let cfg=loadConfig();
@@ -619,8 +763,9 @@ function ruleParams(rule){
 }
 function gestureLabel(id){
   if(BUILTIN[id]) return `${BUILTIN[id].icon} ${BUILTIN[id].name}`;
-  const c=cfg.customGestures.find(x=>'c:'+x.id===id); return c?`⭐ ${c.name}`:'(удалённый жест)';
+  const c=cfg.customGestures.find(x=>'c:'+x.id===id); return c?`${c.kind==='combo'?'🔗':'⭐'} ${c.name}`:'(удалённый жест)';
 }
+const isEventGesture=id=>!!BUILTIN[id]?.event||cfg.customGestures.some(c=>'c:'+c.id===id&&c.kind==='combo');
 
 // ====================== Признаки руки для своих жестов ======================
 let aspect=16/9;
@@ -648,6 +793,7 @@ function nearest(gst, feat){ let best=Infinity; for(const s of gst.samples){ con
 // ====================== Камера и модель ======================
 const video=$('#video');
 let stream=null, recognizer=null, statusMsg='Загружаю модель…';
+let visionMod=null, filesets=null, faceLm=null, poseLm=null;   // лицо и тело — отдельные модели, по желанию
 const isObsInput=()=>cfg.settings.input==='obs';
 // Кадры из OBS: GetSourceScreenshot через obs-websocket — браузеру не нужен доступ к камере
 const shot={img:null,pending:null,lastT:0,timer:null};
@@ -700,7 +846,28 @@ async function initModel(){
     try{ recognizer=await GestureRecognizer.createFromOptions(files,opts(cfg.settings.gpu?'GPU':'CPU')); }
     catch(e){ console.warn('GPU не завёлся, пробую CPU',e); recognizer=await GestureRecognizer.createFromOptions(files,opts('CPU')); }
     if(statusMsg==='Загружаю модель…') statusMsg='';
+    visionMod=await import(`${CDN}/vision_bundle.mjs`); filesets=files;
+    initExtraModels();
   }catch(e){ statusMsg='Не удалось загрузить модель MediaPipe (нужен интернет).\n'+e.message; console.error(e); }
+}
+// Модели лица и позы грузятся, когда включены в настройках, и закрываются, когда выключены
+const extra={busy:false};
+async function createLandmarker(cls,opts){
+  const C=visionMod[cls], mk=d=>C.createFromOptions(filesets,{...opts,baseOptions:{...opts.baseOptions,delegate:d}});
+  if(!cfg.settings.gpu) return mk('CPU');
+  try{ return await mk('GPU'); }catch(e){ console.warn(cls,'GPU не завёлся, пробую CPU',e); return mk('CPU'); }
+}
+async function initExtraModels(){
+  if(!visionMod||extra.busy) return; extra.busy=true; const s=cfg.settings;
+  try{
+    if(s.face&&!faceLm){ try{ faceLm=await createLandmarker('FaceLandmarker',{baseOptions:{modelAssetPath:FACE_MODEL},runningMode:'VIDEO',numFaces:1,outputFaceBlendshapes:true}); }
+      catch(e){ console.error(e); toast('Модель лица не загрузилась: '+e.message); s.face=false; save(); renderSettings(); } }
+    if(!s.face&&faceLm){ try{ faceLm.close(); }catch{} faceLm=null; faceNow.pts=null; faceNow.bs=null; faceNow.box=null; }
+    if(s.pose&&!poseLm){ try{ poseLm=await createLandmarker('PoseLandmarker',{baseOptions:{modelAssetPath:POSE_MODEL},runningMode:'VIDEO',numPoses:1}); }
+      catch(e){ console.error(e); toast('Модель позы не загрузилась: '+e.message); s.pose=false; save(); renderSettings(); } }
+    if(!s.pose&&poseLm){ try{ poseLm.close(); }catch{} poseLm=null; poseNow.pts=null; poseNow.raw=null; }
+  } finally { extra.busy=false; }
+  if((s.face&&!faceLm)||(s.pose&&!poseLm)||(!s.face&&faceLm)||(!s.pose&&poseLm)) initExtraModels();   // настройку переключили, пока грузилось
 }
 
 // ====================== Распознавание ======================
@@ -719,18 +886,117 @@ function detect(t){
   aspect=(w||16)/(h||9); updateLayout(w,h);
   const ts=Math.max(t,lastDetTs+1); lastDetTs=ts;
   let r; try{ r=recognizer.recognizeForVideo(src,ts); }catch(e){ console.warn(e); return false; }
+  ingestHands(r,t);
+  if((faceLm||poseLm)&&detCount%Math.max(1,cfg.settings.modelEvery|0)===0){   // лицо и тело можно считать реже рук
+    if(faceLm){ try{ faceUpdate(faceLm.detectForVideo(src,ts),t); }catch(e){ console.warn(e); } }
+    if(poseLm){ try{ poseUpdate(poseLm.detectForVideo(src,ts),t); }catch(e){ console.warn(e); } }
+  }
+  if(rec) recordStep(t);
+  detCount++;
+  return true;
+}
+// Имена рук для раздельного срабатывания: 'L'/'R' по handedness модели; если она назвала обе руки одинаково —
+// различаем по положению в кадре. Жест двумя руками — 'LR', лицо — 'F', тело — 'P'.
+function handKeys(){
+  const keys=hands.map(h=>h.handed==='Left'?'L':'R');
+  if(keys.length===2&&keys[0]===keys[1]){ const l=hands[0].lm[0].x<hands[1].lm[0].x?0:1; keys[l]='L'; keys[1-l]='R'; }
+  return keys;
+}
+// Результат модели рук -> hands[] с точками на экране, признаками для своих жестов и непрерывными величинами
+function ingestHands(r,t){
   hands=(r.landmarks||[]).map((lm,i)=>{
     const handed=r.handedness?.[i]?.[0]?.categoryName||'Right';
     const gst=r.gestures?.[i]?.[0];
     const h={lm,handed,builtin:gst?{name:gst.categoryName,score:gst.score}:null};
     h.feat=handFeature(lm,handed);
-    h.center=toScreen({x:(lm[0].x+lm[9].x)/2,y:(lm[0].y+lm[9].y)/2});
-    h.tip=toScreen(lm[8]);
+    h.pts=lm.map(toScreen); h.c=palmCenter(h.pts); h.center=h.c; h.tip=h.pts[8];
+    const scPx=h.feat.sc*layout.dh||1, d=(a,b)=>Math.hypot(h.pts[a].x-h.pts[b].x,h.pts[a].y-h.pts[b].y)/scPx;
+    // pinch — зазор большой–указательный, spread — раскрытие ладони, roll — поворот кисти на экране (0° пальцы вверх, + по часовой)
+    h.m={pinch:d(4,8),spread:(d(0,8)+d(0,12)+d(0,16)+d(0,20))/4,roll:Math.atan2(h.pts[9].x-h.pts[0].x,-(h.pts[9].y-h.pts[0].y))*180/Math.PI};
     return h;
   });
-  if(rec) recordStep(t);
-  detCount++;
-  return true;
+  const keys=handKeys(); hands.forEach((h,i)=>h.key=keys[i]);
+  updateHandState(t);
+}
+
+// ---------- живое состояние рук: позиции, скорость, траектории ----------
+const tracks=new Map();   // 'L'/'R'/'F' -> [{t,x,y,g}] в долях экрана за последние ~2 с (g — встроенный жест в тот момент)
+function trackPush(k,t,x,y,g){ let a=tracks.get(k); if(!a) tracks.set(k,a=[]); a.push({t,x,y,g}); while(a.length&&t-a[0].t>2000) a.shift(); }
+function updateHandState(t){
+  const seen=new Set();
+  for(const h of hands){ const hk=h.key; seen.add(hk);
+    const prev=handLm.get(hk), dt=prev?(t-prev.t)/1000:0;
+    const st={pts:h.pts,c:h.c,sc:h.feat.sc*layout.dh||1,t,since:prev?prev.since:t,vx:0,vy:0,m:h.m,gest:h.builtin?.name||'None',score:h.builtin?.score||0};
+    if(prev&&dt>0&&dt<0.5){ const k=Math.min(1,dt*12); st.vx=prev.vx*(1-k)+(h.c.x-prev.c.x)/dt*k; st.vy=prev.vy*(1-k)+(h.c.y-prev.c.y)/dt*k; }
+    handLm.set(hk,st); trackPush(hk,t,h.c.x/W,h.c.y/H,st.gest);
+  }
+  for(const [k,v] of handLm) if(!seen.has(k)&&t-v.t>400){ handLm.delete(k); tracks.delete(k); dynRefr.delete(k); }
+  if(cfg.settings.dyn.enabled) detectDynamics(t);
+}
+function faceUpdate(r,t){
+  const lm=r.faceLandmarks?.[0];
+  if(!lm){ if(t-faceNow.t>600){ faceNow.pts=null; faceNow.bs=null; faceNow.box=null; } return; }
+  const pts=lm.map(toScreen); let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  for(const p of pts){ if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.y<y0)y0=p.y; if(p.y>y1)y1=p.y; }
+  const bs={}; for(const c of r.faceBlendshapes?.[0]?.categories||[]) bs[c.categoryName]=c.score;
+  faceNow.t=t; faceNow.pts=pts; faceNow.bs=bs; faceNow.box={x:x0,y:y0,w:x1-x0,h:y1-y0,cx:(x0+x1)/2,cy:(y0+y1)/2};
+  faceNow.tilt=Math.atan2(pts[263].y-pts[33].y,pts[263].x-pts[33].x)*180/Math.PI;   // наклон головы по линии глаз
+  trackPush('F',t,pts[1].x/W,pts[1].y/H);   // нос — для кивка и мотания
+}
+function poseUpdate(r,t){
+  const lm=r.landmarks?.[0];
+  if(!lm){ if(t-poseNow.t>600){ poseNow.pts=null; poseNow.raw=null; } return; }
+  poseNow.t=t; poseNow.raw=lm; poseNow.pts=lm.map(toScreen);
+}
+// Рамка лица на экране: от модели лица, иначе от позы (глаза, уши, нос). Нужна для фейспалма.
+function faceBox(t){
+  if(faceNow.box&&t-faceNow.t<500) return faceNow.box;
+  const p=poseNow.pts, r=poseNow.raw; if(!p||t-poseNow.t>500||[0,2,5,7,8].some(i=>(r[i].visibility??1)<0.5)) return null;
+  const w=Math.max(20,Math.abs(p[7].x-p[8].x)*1.15), cx=(p[2].x+p[5].x+p[0].x)/3, cy=p[0].y;
+  return {x:cx-w/2,y:cy-w*0.7,w,h:w*1.4,cx,cy};
+}
+
+// ---------- динамика: свайпы, круги, бросок, кивок — события, а не позы ----------
+const dynEvents=[];        // {id,hand,anchor,tip,dir?,until}: событие живёт 300 мс как «активный жест»
+const dynRefr=new Map();   // рука -> время, до которого новые движения не ловим (чтобы одно движение не дало два события)
+let lastEvent=null;
+function emitEvent(id,hand,anchor,tip,extra,t){ dynEvents.push({id,hand,anchor,tip,dir:extra.dir,until:t+300}); dynRefr.set(hand,t+(extra.refr||700)); lastEvent={id,hand,t}; }
+const spanLen=(a,b)=>Math.hypot(b.x-a.x,(b.y-a.y)*H/W);   // расстояние между точками трека в долях ширины экрана
+function detectDynamics(t){
+  const D=cfg.settings.dyn;
+  for(const h of hands){ const hk=h.key, tr=tracks.get(hk); if(!tr||tr.length<4||(dynRefr.get(hk)||0)>t) continue;
+    const st=handLm.get(hk), cur=tr[tr.length-1];
+    // свайп: за swipeTime мс сместилась на swipeDist ширины экрана почти по прямой, вдоль одной оси
+    const w=tr.filter(p=>t-p.t<=D.swipeTime);
+    if(w.length>=3&&t-tr[0].t>=300){ const p0=w[0], d={x:cur.x-p0.x,y:(cur.y-p0.y)*H/W}, L=Math.hypot(d.x,d.y); let path=0;
+      for(let i=1;i<w.length;i++) path+=spanLen(w[i-1],w[i]);
+      let straight=L>=D.swipeDist&&L/path>=0.75;   // и все отрезки смотрят примерно в одну сторону (±35°): дуга круга — не свайп
+      for(let i=1;i<w.length&&straight;i++){ const sx=w[i].x-w[i-1].x, sy=(w[i].y-w[i-1].y)*H/W, sl=Math.hypot(sx,sy); if(sl>0.01&&(sx*d.x+sy*d.y)/(sl*L)<0.82) straight=false; }
+      if(straight){ const ax=Math.abs(d.x), ay=Math.abs(d.y); let id=null;
+        if(ax>1.7*ay) id=d.x>0?'Swipe_Right':'Swipe_Left'; else if(ay>1.7*ax) id=d.y>0?'Swipe_Down':'Swipe_Up';
+        if(id){ emitEvent(id,hk,st.c,st.pts[8],{dir:d},t); tr.length=0; continue; } } }
+    // бросок: недавно был кулак, сейчас ладонь раскрыта, и за это время рука разогналась
+    if(st.gest==='Open_Palm'){ let vmax=0, from=null;
+      for(let i=tr.length-1;i>0&&t-tr[i].t<=500;i--){ const dt=(tr[i].t-tr[i-1].t)/1000||1e-3; vmax=Math.max(vmax,spanLen(tr[i-1],tr[i])/dt); if(tr[i-1].g==='Closed_Fist') from=tr[i-1]; }
+      if(from&&vmax>=D.throwSpeed){ emitEvent('Throw',hk,st.c,st.pts[8],{dir:{x:cur.x-from.x,y:(cur.y-from.y)*H/W},refr:900},t); tr.length=0; continue; } }
+    // круг: за circleTime мс точки лежат на окружности, угол набежал почти на оборот в одну сторону
+    const c=tr.filter(p=>t-p.t<=D.circleTime);
+    if(c.length>=8){ let cx=0,cy=0; for(const p of c){ cx+=p.x; cy+=p.y*H/W; } cx/=c.length; cy/=c.length;
+      const rs=c.map(p=>Math.hypot(p.x-cx,p.y*H/W-cy)), R=rs.reduce((a,b)=>a+b)/rs.length;
+      if(R>=0.04&&Math.sqrt(rs.reduce((a,r)=>a+(r-R)**2,0)/rs.length)/R<=0.35){ let sum=0,pos=0,neg=0;
+        for(let i=1;i<c.length;i++){ let d=Math.atan2(c[i].y*H/W-cy,c[i].x-cx)-Math.atan2(c[i-1].y*H/W-cy,c[i-1].x-cx);
+          if(d>Math.PI) d-=2*Math.PI; if(d<-Math.PI) d+=2*Math.PI; sum+=d; d>0?pos++:neg++; }
+        if(Math.abs(sum)>=1.8*Math.PI&&Math.max(pos,neg)/(c.length-1)>=0.8){ emitEvent(sum>0?'Circle_CW':'Circle_CCW',hk,st.c,st.pts[8],{refr:1000},t); tr.length=0; continue; } } }
+  }
+  // кивок / мотание — нос колеблется по вертикали / горизонтали: не меньше трёх смен направления за 1,2 с
+  const f=tracks.get('F'), fb=faceNow.box;
+  if(f&&f.length>=6&&fb&&(dynRefr.get('F')||0)<=t){
+    const osc=(axis,amp)=>{ const w=f.filter(p=>t-p.t<=1200); if(w.length<6) return false; let rev=0,dir=0,last=w[0][axis];
+      for(const p of w){ const d=p[axis]-last; if(Math.abs(d)<amp) continue; const sg=Math.sign(d); if(dir&&sg!==dir) rev++; dir=sg; last=p[axis]; } return rev>=3; };
+    const a={x:fb.cx,y:fb.cy}, tp={x:fb.cx,y:fb.y};
+    if(osc('y',fb.h/H*0.1)){ emitEvent('Face_Nod','F',a,tp,{refr:1200},t); f.length=0; }
+    else if(osc('x',fb.w/W*0.1)){ emitEvent('Face_Shake','F',a,tp,{refr:1200},t); f.length=0; }
+  }
 }
 
 function isFingerHeart(lm){
@@ -739,70 +1005,130 @@ function isFingerHeart(lm){
   const folded=(tip,joint)=>d(0,tip)<d(0,joint)*1.12;
   return d(4,8)<palm*0.38 && d(0,4)>palm*0.65 && d(0,8)>palm*0.85 && folded(12,10) && folded(16,14) && folded(20,18);
 }
-// Имена рук для раздельного срабатывания: 'L'/'R' по handedness модели; если она назвала обе руки одинаково —
-// различаем по положению в кадре. Жест двумя руками — 'LR'.
-function handKeys(){
-  const keys=hands.map(h=>h.handed==='Left'?'L':'R');
-  if(keys.length===2&&keys[0]===keys[1]){ const l=hands[0].lm[0].x<hands[1].lm[0].x?0:1; keys[l]='L'; keys[1-l]='R'; }
-  return keys;
+
+// ---------- k-NN по своим жестам ----------
+// Среди всех записанных кадров своих жестов на nh рук (включая «фон» — то, что жестом НЕ является) берём K ближайших;
+// побеждает жест с наибольшим взвешенным голосом, и срабатывает только если его ближайший кадр ближе порога.
+// С выключенным k-NN — старое поведение: каждый жест сравнивается со своим порогом независимо.
+function knnHits(feat,nh){
+  const K=5, gs=cfg.customGestures.filter(c=>c.kind!=='combo'&&c.hands===nh&&c.samples.length); if(!gs.length) return [];
+  const seen=(cg,d)=>liveDist.set(cg.id,Math.min(d,liveDist.get(cg.id)??Infinity));
+  if(!cfg.settings.knn){ const out=[]; for(const cg of gs){ const d=nearest(cg,feat); seen(cg,d); if(!cg.negative&&d<cg.threshold) out.push({id:cg.id,d}); } return out; }
+  const cands=[]; for(const cg of gs){ let bd=Infinity; for(const smp of cg.samples){ const d=featDist(smp,feat); if(d<bd) bd=d; cands.push([d,cg]); } seen(cg,bd); }
+  cands.sort((a,b)=>a[0]-b[0]);
+  const votes=new Map(); for(const [d,cg] of cands.slice(0,K)) votes.set(cg,(votes.get(cg)||0)+1/(d+0.02));
+  let win=null; for(const [cg,v] of votes) if(!win||v>win.v) win={cg,v};
+  const bd=cands.find(c=>c[1]===win.cg)[0];
+  return !win.cg.negative&&bd<win.cg.threshold?[{id:win.cg.id,d:bd}]:[];
 }
-function computeActive(){
-  const act=new Map(); const s=cfg.settings;   // gestureId -> [{hand,anchor,tip,score}], по экземпляру на каждую руку
-  const put=(id,hand,anchor,tip,score)=>{ let arr=act.get(id); if(!arr) act.set(id,arr=[]);
-    const cur=arr.find(x=>x.hand===hand); if(!cur) arr.push({hand,anchor,tip,score}); else if(score>cur.score) Object.assign(cur,{anchor,tip,score}); };
+
+// ---------- что активно сейчас ----------
+const stable=new Map();     // 'жест@рука' -> {n,last}: сколько детекций подряд поза видна (settings.stableFrames)
+const gestSince=new Map();  // 'жест@рука' -> {since,last}: с какого момента жест держится (для ручки «время удержания»)
+const actLog=new Map();     // рука -> [{id,t,anchor,tip}]: недавние появления жестов, для комбо
+const comboFired=new Map(); // 'комбо@рука' -> t появления, на котором комбо уже сработало
+let prevKeys=new Set();
+function computeActive(t){
+  const act=new Map(); const s=cfg.settings;   // gestureId -> [{hand,anchor,tip,score,dir?,event?}], по экземпляру на каждую руку
+  const put=(id,hand,anchor,tip,score,extra)=>{ let arr=act.get(id); if(!arr) act.set(id,arr=[]);
+    const cur=arr.find(x=>x.hand===hand); if(!cur) arr.push({hand,anchor,tip,score,...extra}); else if(score>cur.score) Object.assign(cur,{anchor,tip,score},extra); };
   liveDist.clear();
-  const keys=handKeys();
-  hands.forEach((h,i)=>{
-    const hk=keys[i]; let customHit=false;
-    for(const cg of cfg.customGestures){ if(cg.hands!==1||!cg.samples.length) continue;
-      const d=nearest(cg,h.feat.f); liveDist.set(cg.id,Math.min(d,liveDist.get(cg.id)??Infinity));
-      if(d<cg.threshold){ put('c:'+cg.id,hk,h.center,h.tip,1-d); customHit=true; } }
-    if(!(s.customPriority&&customHit) && isFingerHeart(h.lm)){
-      const a=toScreen(h.lm[4]), b=toScreen(h.lm[8]); put('Finger_Heart',hk,{x:(a.x+b.x)/2,y:(a.y+b.y)/2},h.tip,1); return; }
-    if(h.builtin && h.builtin.name!=='None' && h.builtin.score>=s.minScore && !(s.customPriority&&customHit))
-      put(h.builtin.name,hk,h.center,h.tip,h.builtin.score);
+  const fb=faceBox(t);
+  hands.forEach(h=>{
+    const hk=h.key; let customHit=false;
+    for(const hit of knnHits(h.feat.f,1)){ put('c:'+hit.id,hk,h.c,h.tip,1-hit.d); customHit=true; }
+    const skipBuiltin=s.customPriority&&customHit;
+    if(!skipBuiltin&&isFingerHeart(h.lm)){ const a=h.pts[4], b=h.pts[8]; put('Finger_Heart',hk,{x:(a.x+b.x)/2,y:(a.y+b.y)/2},h.tip,1); }
+    else if(!skipBuiltin&&h.builtin&&h.builtin.name!=='None'&&h.builtin.score>=s.minScore) put(h.builtin.name,hk,h.c,h.tip,h.builtin.score);
+    if(fb&&Math.abs(h.c.x-fb.cx)<fb.w*0.6&&Math.abs(h.c.y-fb.cy)<fb.h*0.6) put('Facepalm',hk,h.c,h.tip,1);   // ладонь закрыла лицо
   });
   if(hands.length>=2){
-    const [a,b]=hands; const mid={x:(a.center.x+b.center.x)/2,y:(a.center.y+b.center.y)/2};
-    const tipMid={x:(a.tip.x+b.tip.x)/2,y:(a.tip.y+b.tip.y)/2};
+    const [a,b]=hands; const mid={x:(a.c.x+b.c.x)/2,y:(a.c.y+b.c.y)/2}, tipMid={x:(a.tip.x+b.tip.x)/2,y:(a.tip.y+b.tip.y)/2};
     // встроенное правило: сердце двумя руками
     const sc=(a.feat.sc+b.feat.sc)/2, dist=(p,q)=>Math.hypot((p.x-q.x)*aspect,p.y-q.y);
     if(dist(a.lm[8],b.lm[8])<0.75*sc && dist(a.lm[4],b.lm[4])<0.75*sc && a.lm[8].y<a.lm[4].y && b.lm[8].y<b.lm[4].y &&
-       dist(a.lm[8],a.lm[4])>0.5*sc) put('Two_Hand_Heart','LR',{x:(toScreen(a.lm[8]).x+toScreen(b.lm[4]).x)/2,y:toScreen(a.lm[6]).y},tipMid,1);
-    const f2=twoHandFeature(a,b);
-    for(const cg of cfg.customGestures){ if(cg.hands!==2||!cg.samples.length) continue;
-      const d=nearest(cg,f2); liveDist.set(cg.id,d); if(d<cg.threshold) put('c:'+cg.id,'LR',mid,tipMid,1-d); }
+       dist(a.lm[8],a.lm[4])>0.5*sc) put('Two_Hand_Heart','LR',{x:(a.pts[8].x+b.pts[4].x)/2,y:a.pts[6].y},tipMid,1);
+    for(const hit of knnHits(twoHandFeature(a,b),2)) put('c:'+hit.id,'LR',mid,tipMid,1-hit.d);
   }
+  // лицо: blendshapes модели лица, порог — «чувствительность лица» в настройках
+  const bs=faceNow.bs;
+  if(bs&&t-faceNow.t<500){ const B=faceNow.box, fa={x:B.cx,y:B.cy}, ft={x:B.cx,y:B.y}, thr=1.1-s.faceSens, v=k=>bs[k]||0;
+    const F=(id,sc)=>{ if(sc>=thr) put(id,'F',fa,ft,sc); };
+    F('Face_MouthOpen',v('jawOpen')); F('Face_Smile',(v('mouthSmileLeft')+v('mouthSmileRight'))/2);
+    F('Face_BrowsUp',Math.max(v('browInnerUp'),(v('browOuterUpLeft')+v('browOuterUpRight'))/2)); F('Face_Frown',(v('browDownLeft')+v('browDownRight'))/2);
+    F('Face_Puff',v('cheekPuff')); if(v('mouthPucker')>=thr&&v('jawOpen')<0.25) put('Face_Kiss','F',fa,ft,v('mouthPucker'));
+    const bl=v('eyeBlinkLeft'), br=v('eyeBlinkRight'); if((bl>=0.6&&br<=0.3)||(br>=0.6&&bl<=0.3)) put('Face_Wink','F',fa,ft,Math.max(bl,br));
+  }
+  // тело: позы по 33 точкам (11/12 плечи, 15/16 кисти, 23/24 бёдра, 7/8 уши; «левое» — левое у человека, в кадре справа)
+  const pp=poseNow.raw;
+  if(pp&&t-poseNow.t<500){ const P=poseNow.pts, vis=i=>(pp[i].visibility??1)>0.5;
+    if([0,7,8,11,12,15,16].every(vis)){ const sw=Math.hypot((pp[11].x-pp[12].x)*aspect,pp[11].y-pp[12].y)||1e-6, swx=sw/aspect, ps=s.poseSens;
+      const chest={x:(P[11].x+P[12].x)/2,y:(P[11].y+P[12].y)/2}, top={x:chest.x,y:P[0].y};
+      const earY=(pp[7].y+pp[8].y)/2, shY=(pp[11].y+pp[12].y)/2, lw=pp[15], rw=pp[16], midX=(pp[11].x+pp[12].x)/2;
+      const hipY=vis(23)&&vis(24)?(pp[23].y+pp[24].y)/2:shY+sw*1.6;
+      if((shY-earY)/sw<0.25+0.4*ps) put('Pose_Shrug','P',top,top,1);                                   // плечи подтянулись к ушам
+      if(lw.x<midX-swx*0.1&&rw.x>midX+swx*0.1&&lw.y>shY&&lw.y<hipY&&rw.y>shY&&rw.y<hipY) put('Pose_ArmsCrossed','P',chest,chest,1);   // кисти накрест на груди
+      if(lw.y<pp[0].y&&rw.y<pp[0].y) put('Pose_HandsUp','P',top,top,1);
+      if(Math.abs(lw.y-pp[11].y)<sw*0.35&&Math.abs(rw.y-pp[12].y)<sw*0.35&&Math.abs(lw.x-pp[11].x)>swx*0.9&&Math.abs(rw.x-pp[12].x)>swx*0.9) put('Pose_TPose','P',chest,chest,1);
+    } }
+  // стабильность: поза должна быть видна stableFrames детекций подряд (события добавляются ниже и идут сразу)
+  const need=Math.max(1,s.stableFrames|0), cur=new Set();
+  for(const [id,arr] of act){ for(let i=arr.length-1;i>=0;i--){ const k=id+'@'+arr[i].hand; cur.add(k);
+      let st=stable.get(k); if(!st) stable.set(k,st={n:0}); st.n++; st.last=t; if(st.n<need) arr.splice(i,1); }
+    if(!arr.length) act.delete(id); }
+  for(const [k,st] of stable) if(!cur.has(k)){ if(t-st.last>220) stable.delete(k); else st.n=0; }
+  // события динамики и комбо
+  for(let i=dynEvents.length-1;i>=0;i--){ const e=dynEvents[i]; if(e.until<t){ dynEvents.splice(i,1); continue; } put(e.id,e.hand,e.anchor,e.tip,1,{dir:e.dir,event:true}); }
+  const comboIds=new Set(cfg.customGestures.filter(c=>c.kind==='combo').map(c=>'c:'+c.id)), nowKeys=new Set();
+  for(const [id,arr] of act) for(const a of arr){ const k=id+'@'+a.hand; nowKeys.add(k);
+    let gs=gestSince.get(k); if(!gs) gestSince.set(k,gs={since:t}); gs.last=t;
+    if(!prevKeys.has(k)&&!comboIds.has(id)){ let log=actLog.get(a.hand); if(!log) actLog.set(a.hand,log=[]);
+      log.push({id,t,anchor:a.anchor,tip:a.tip}); while(log.length>12||(log.length&&t-log[0].t>6000)) log.shift(); } }
+  for(const [k,gs] of gestSince) if(!nowKeys.has(k)&&t-gs.last>220) gestSince.delete(k);
+  prevKeys=nowKeys;
+  // комбо — цепочка жестов подряд на одной руке (или на лице): проверяем на свежем появлении последнего шага
+  for(const cg of cfg.customGestures){ if(cg.kind!=='combo'||!cg.steps?.length) continue;
+    for(const [hand,log] of actLog){ const last=log[log.length-1]; if(!last||last.t!==t||last.id!==cg.steps[cg.steps.length-1]) continue;
+      let ok=true, tk=last.t, j=log.length-2;
+      for(let k=cg.steps.length-2;k>=0;k--){ while(j>=0&&log[j].id!==cg.steps[k]&&tk-log[j].t<=cg.gap) j--;
+        if(j<0||log[j].id!==cg.steps[k]||tk-log[j].t>cg.gap){ ok=false; break; } tk=log[j].t; j--; }
+      const fk=cg.id+'@'+hand; if(!ok||comboFired.get(fk)===last.t) continue; comboFired.set(fk,last.t);
+      dynEvents.push({id:'c:'+cg.id,hand,anchor:last.anchor,tip:last.tip,until:t+300}); lastEvent={id:'c:'+cg.id,hand,t};
+      put('c:'+cg.id,hand,last.anchor,last.tip,1,{event:true}); } }
   return act;
 }
 
 // ====================== Правила: удержание и кулдаун ======================
 const ruleState=new Map();   // rule.id -> Map(рука -> {since,lost,fired,last})
-let activeNow=new Map();     // gestureId -> [{hand,anchor,tip,score}]
+let activeNow=new Map();     // gestureId -> [{hand,anchor,tip,score,dir?}]
+const fireLog=[];            // последние срабатывания (HUD, отладка, тесты)
 // Правило срабатывает с каждой руки отдельно, если эффект привязан к руке и в правиле это не выключено.
-// Экранные эффекты и действия OBS срабатывают один раз, от руки с лучшим счётом.
-const perHand = rule => rule.perHand!==false && !!EFFECTS[rule.effect]?.anchored;
+// Экранные эффекты, действия OBS и эффекты на две руки срабатывают один раз, от руки с лучшим счётом.
+const perHand = rule => rule.perHand!==false && !!EFFECTS[rule.effect]?.anchored && !EFFECTS[rule.effect]?.twoHands;
 const bestOf = arr => arr.reduce((b,a)=>a.score>b.score?a:b);
 function fireRule(rule, anchor, src){
   const e=EFFECTS[rule.effect]; if(!e) return;
-  try{ e.run(ruleParams(rule), anchor||{x:W/2,y:H/2}, src||rule.gesture); }catch(err){ console.error(err); }
+  const p=ruleParams(rule);
+  if(knobState.intensity!==1) for(const k of ['count','bolts']) if(typeof p[k]==='number') p[k]=Math.max(1,Math.round(p[k]*knobState.intensity));   // ручка «интенсивность»
+  try{ e.run(p, anchor||{x:W/2,y:H/2}, src||rule.gesture); }catch(err){ console.error(err); }
   playSound(rule.sound);
+  fireLog.push({effect:rule.effect,gesture:rule.gesture,src,t:now()}); if(fireLog.length>100) fireLog.shift();
 }
 function processRules(t){
-  activeNow=computeActive();
+  activeNow=computeActive(t);
   for(const [id,arr] of activeNow){ for(const a of arr){ tips.set(id+'@'+a.hand,a.tip); anchors.set(id+'@'+a.hand,a.anchor); }
     const b=bestOf(arr); tips.set(id,b.tip); anchors.set(id,b.anchor); }
   for(const rule of cfg.rules){
     if(!rule.enabled) continue;
     let states=ruleState.get(rule.id); if(!states){ states=new Map(); ruleState.set(rule.id,states); }
-    const arr=activeNow.get(rule.gesture)||[];
+    const arr=activeNow.get(rule.gesture)||[], hold=isEventGesture(rule.gesture)?0:rule.hold;   // событие (свайп, комбо) — без удержания
     const inst=!arr.length?[] : perHand(rule)?arr.map(a=>[a.hand,a,rule.gesture+'@'+a.hand]) : [['*',bestOf(arr),rule.gesture]];
     const seen=new Set();
     for(const [hk,a,src] of inst){
       seen.add(hk);
       let st=states.get(hk); if(!st){ st={since:null,lost:null,fired:false,last:-1e9}; states.set(hk,st); }
       st.lost=null; if(st.since==null) st.since=t;
-      if(t-st.since>=rule.hold && t-st.last>=rule.cooldown && (rule.repeat||!st.fired)){ fireRule(rule,a.anchor,src); st.last=t; st.fired=true; }
+      if(t-st.since>=hold && t-st.last>=rule.cooldown && (rule.repeat||!st.fired)){ fireRule(rule,{...a.anchor,dir:a.dir},src); st.last=t; st.fired=true; }
     }
     for(const [hk,st] of states){
       if(seen.has(hk)||st.since==null) continue;
@@ -810,10 +1136,15 @@ function processRules(t){
       if(t-st.lost>220){ st.since=null; st.lost=null; st.fired=false; }  // небольшая «терпимость» к морганию детекции
     }
   }
+  processKnobs(t);
 }
 
 // ====================== Запись своих жестов ======================
-function startRecording(target){ // target: {gestureId?|name,hands}
+// Два способа: «● Записать» — 2,5 с кадров подряд, «📸 Кадр» (клавиша C) — один кадр за нажатие: показал десять раз — десять кадров.
+// negative — «фон»: позы, которые жестом НЕ являются; участвуют в k-NN-голосовании и глушат ложные срабатывания, но сами не срабатывают.
+let snapTarget=null;                    // цель для клавиши C: {name,hands,gestureId?,negative?} — форма или карточка, что нажали последним
+let formTarget={name:'Мой жест',hands:1};   // цель формы «Записать новый жест»; gestureId появляется после первого кадра и живёт, пока не сменили название
+function startRecording(target){ // target: {gestureId?|name,hands,negative?}
   if(!recognizer||!(isObsInput()?shot.img:stream)){ toast('Нет кадров или модель ещё не готова'); return; }
   const t=now(); rec={...target,start:t+3000,end:t+5500,samples:[]};
 }
@@ -824,15 +1155,201 @@ function recordStep(t){
   if(rec.hands===1 && hands.length>=1) rec.samples.push(hands[0].feat.f.slice());
   else if(rec.hands===2 && hands.length>=2){ rec.samples.push(twoHandFeature(hands[0],hands[1])); }
 }
+function addSamples(target,s){   // кладёт кадры в существующий жест или создаёт новый; возвращает жест
+  s=s.map(v=>v.map(x=>Math.round(x*1000)/1000));
+  let cg=target.gestureId?cfg.customGestures.find(x=>x.id===target.gestureId):null;
+  if(!cg&&target.negative) cg=cfg.customGestures.find(x=>x.negative&&x.hands===target.hands);
+  if(!cg){ cg={id:uid(),name:target.name||(target.negative?'Фон (не жест)':'Мой жест'),hands:target.hands,threshold:target.hands===2?0.35:0.25,samples:[],negative:!!target.negative}; cfg.customGestures.push(cg); }
+  cg.samples.push(...s); if(cg.samples.length>160) cg.samples=cg.samples.slice(-160);
+  target.gestureId=cg.id; save(); renderCustom(); renderRules(); renderKnobs(); return cg;
+}
 function finishRecording(){
   const r=rec; rec=null;
   let s=r.samples; if(s.length<3){ toast(r.hands===2?'Не увидел две руки — попробуй ещё раз':'Не увидел руку — попробуй ещё раз'); return; }
   if(s.length>40){ const step=s.length/40; s=Array.from({length:40},(_,i)=>s[Math.floor(i*step)]); }
-  s=s.map(v=>v.map(x=>Math.round(x*1000)/1000));
-  let cg;
-  if(r.gestureId){ cg=cfg.customGestures.find(x=>x.id===r.gestureId); if(cg) cg.samples.push(...s); if(cg&&cg.samples.length>160) cg.samples=cg.samples.slice(-160); }
-  else { cg={id:uid(),name:r.name||'Мой жест',hands:r.hands,threshold:r.hands===2?0.35:0.25,samples:s}; cfg.customGestures.push(cg); }
-  save(); renderCustom(); renderRules(); toast(`«${cg?.name}»: записано кадров — ${s.length}`);
+  const cg=addSamples(r,s); toast(`«${cg.name}»: записано кадров — ${s.length}`);
+}
+function snapshotSample(target){
+  let f=null;
+  if(target.hands===1&&hands.length>=1) f=hands[0].feat.f.slice(); else if(target.hands===2&&hands.length>=2) f=twoHandFeature(hands[0],hands[1]);
+  if(!f){ toast(target.hands===2?'Не вижу две руки':'Не вижу руку'); return; }
+  const cg=addSamples(target,[f]); toast(`«${cg.name}»: кадров ${cg.samples.length}`);
+}
+
+// ====================== Ручки: непрерывные параметры ======================
+// Ручка — не триггер, а регулятор: пока выполняется условие (жест или просто рука/лицо в кадре), значение источника
+// (щепотка, высота руки, поворот кисти, открытость рта…) линейно переводится из диапазона входа в диапазон цели.
+const KNOB_SRC={
+  pinch:  {name:'Щепотка: зазор большой–указательный', min:0.15, max:1.3, fmt:v=>v.toFixed(2)+' ладони'},
+  spread: {name:'Раскрытие ладони',                    min:1.0,  max:1.9, fmt:v=>v.toFixed(2)+' ладони'},
+  roll:   {name:'Поворот кисти',                       min:-90,  max:90,  fmt:v=>v.toFixed(0)+'°'},
+  y:      {name:'Высота руки',                         min:0.15, max:0.85,fmt:v=>(v*100).toFixed(0)+'% экрана'},
+  x:      {name:'Рука по горизонтали',                 min:0.15, max:0.85,fmt:v=>(v*100).toFixed(0)+'% экрана'},
+  size:   {name:'Близость к камере (размер ладони)',   min:0.08, max:0.4, fmt:v=>(v*100).toFixed(0)+'% высоты'},
+  hold:   {name:'Время удержания жеста',               min:0,    max:3,   fmt:v=>v.toFixed(1)+' с'},
+  twoDist:{name:'Расстояние между руками',             min:0.1,  max:0.8, fmt:v=>(v*100).toFixed(0)+'% ширины', two:true},
+  mouth:  {name:'Открытость рта',                      min:0.05, max:0.7, fmt:v=>v.toFixed(2), face:true},
+  brows:  {name:'Поднятые брови',                      min:0.1,  max:0.8, fmt:v=>v.toFixed(2), face:true},
+  tilt:   {name:'Наклон головы',                       min:-30,  max:30,  fmt:v=>v.toFixed(0)+'°', face:true},
+  headX:  {name:'Голова по горизонтали',               min:0.25, max:0.75,fmt:v=>(v*100).toFixed(0)+'% экрана', face:true},
+};
+const KNOB_TGT={
+  zoomLocal:   {name:'Зум картинки в этом оверлее (режим камеры)', min:1, max:2.2, reset:1,
+    params:{at:{label:'Центр зума',type:'select',options:{hand:'рука',center:'центр экрана'},def:'hand'}}},
+  obsTransform:{name:'OBS: трансформация источника', obs:true, eps:0.004, min:1, max:2.2, reset:1,
+    params:{source:{label:'Источник',type:'text',def:'',list:'dl-obs-sources'},scene:{label:'Сцена (пусто — текущая)',type:'text',def:'',list:'dl-obs-scenes'},
+      prop:{label:'Что менять',type:'select',options:{scale:'масштаб (×, вокруг центра)',rotation:'поворот, ° (+ к текущему)',x:'сдвиг по X, px',y:'сдвиг по Y, px'},def:'scale'}}},
+  obsVolume:   {name:'OBS: громкость источника звука', obs:true, eps:0.01, min:0, max:1, reset:1,
+    params:{input:{label:'Источник звука',type:'text',def:'',list:'dl-obs-inputs'}}},
+  obsFilter:   {name:'OBS: параметр фильтра', obs:true, eps:0.5, min:0, max:100, reset:0,
+    params:{source:{label:'Источник',type:'text',def:'',list:'dl-obs-sources'},filter:{label:'Фильтр',type:'text',def:''},
+      key:{label:'Ключ настройки',type:'text',def:''}}},
+  volume:      {name:'Громкость эффектов оверлея (×)', min:0, max:1, reset:1},
+  intensity:   {name:'Интенсивность эффектов (× к количеству частиц)', min:0.2, max:3, reset:1},
+  hue:         {name:'Оттенок эффектов (поворот цвета, °)', min:0, max:360, reset:0},
+};
+const KNOB_PRESETS=[
+  {label:'Щепотка → зум камеры в OBS', k:{name:'Щепотка → зум',source:'pinch',gate:'*',target:'obsTransform',params:{prop:'scale'},outMin:1,outMax:2,resetTo:1,release:'reset'}},
+  {label:'Высота ✋ → громкость OBS', k:{name:'Высота руки → громкость',source:'y',gate:'Open_Palm',target:'obsVolume',outMin:0,outMax:1,resetTo:1,release:'keep'}},
+  {label:'Поворот ✋ → оттенок эффектов', k:{name:'Поворот кисти → оттенок',source:'roll',gate:'Open_Palm',target:'hue',outMin:0,outMax:360,resetTo:0,release:'keep'}},
+  {label:'Удержание ✊ → интенсивность', k:{name:'Держу кулак → интенсивность',source:'hold',gate:'Closed_Fist',target:'intensity',inMin:0,inMax:3,outMin:0.5,outMax:3,resetTo:1,release:'reset'}},
+  {label:'Открытый рот → зум оверлея', k:{name:'Рот → зум',source:'mouth',gate:'*',target:'zoomLocal',outMin:1,outMax:1.8,resetTo:1,release:'reset'}},
+];
+function newKnob(o={}){ const src=KNOB_SRC[o.source||'pinch'], tgt=KNOB_TGT[o.target||'zoomLocal'];
+  return {id:uid(),enabled:true,name:'',hand:'any',gate:'*',source:'pinch',inMin:src.min,inMax:src.max,invert:false,target:'zoomLocal',params:{},
+    outMin:tgt.min,outMax:tgt.max,resetTo:tgt.reset,release:'reset',smooth:0.4,...o}; }
+const knobState={intensity:1,volume:1,hue:0,st:new Map()};   // st: knob.id -> {raw,v,out,active,hand,base,lastSend,lastOut,errT}
+// сырое значение источника или null, если условие ручки не выполнено (нет руки/лица, нет жеста-условия)
+function knobRaw(k,st,t){
+  const S=KNOB_SRC[k.source]; if(!S) return null;
+  const gated=hk=>{ if(k.gate==='*') return true; const arr=activeNow.get(k.gate); return !!arr&&(!hk||arr.some(a=>a.hand===hk||a.hand==='LR')); };
+  if(S.face){ if(!faceNow.bs||t-faceNow.t>500||!gated()) return null; const bs=faceNow.bs;
+    return k.source==='mouth'?bs.jawOpen||0 : k.source==='brows'?Math.max(bs.browInnerUp||0,((bs.browOuterUpLeft||0)+(bs.browOuterUpRight||0))/2)
+         : k.source==='tilt'?faceNow.tilt : faceNow.box.cx/W; }
+  if(S.two){ const L=handLm.get('L'),R=handLm.get('R'); if(!L||!R||t-L.t>400||t-R.t>400||!gated()) return null; return Math.hypot(L.c.x-R.c.x,L.c.y-R.c.y)/W; }
+  let best=null, bk=null;
+  for(const [hk,h] of handLm){ if(t-h.t>400||(k.hand!=='any'&&k.hand!==hk)||!gated(hk)) continue; if(!best||h.t>best.t){ best=h; bk=hk; } }
+  if(!best) return null; st.hand=bk; st.pos=best.c;
+  switch(k.source){ case 'pinch': return best.m.pinch; case 'spread': return best.m.spread; case 'roll': return best.m.roll;
+    case 'y': return 1-best.c.y/H; case 'x': return best.c.x/W; case 'size': return best.sc/H;
+    case 'hold': { const t0=k.gate==='*'?best.since:gestSince.get(k.gate+'@'+bk)?.since; return t0==null?0:(t-t0)/1000; } }
+  return null;
+}
+function processKnobs(t){
+  let hue=null, vol=null, inten=null, zoom=null;
+  for(const k of cfg.knobs){ let st=knobState.st.get(k.id); if(!st) knobState.st.set(k.id,st={v:null,out:null,active:false,lastSend:0});
+    if(!k.enabled){ if(st.active){ st.active=false; st.out=null; } continue; }
+    const raw=knobRaw(k,st,t); st.raw=raw;
+    if(raw==null){ if(st.active){ st.active=false; st.v=null; if(k.release==='reset'){ st.out=k.resetTo; knobApply(k,st,t,true); } } }
+    else { let v=clamp((raw-k.inMin)/((k.inMax-k.inMin)||1e-6),0,1); if(k.invert) v=1-v;
+      const a=1-clamp(k.smooth??0.4,0,0.95); st.v=st.v==null?v:st.v+(v-st.v)*a; st.out=k.outMin+st.v*(k.outMax-k.outMin);
+      if(!st.active){ st.active=true; knobStart(k,st); } knobApply(k,st,t,false); }
+    if(st.out!=null){ if(k.target==='hue') hue=st.out; else if(k.target==='volume') vol=st.out; else if(k.target==='intensity') inten=st.out;
+      else if(k.target==='zoomLocal') zoom={s:st.out,at:(k.params?.at||'hand')==='hand'&&st.pos?st.pos:{x:W/2,y:H/2}}; }
+  }
+  knobState.hue=hue??0; knobState.volume=vol??1; knobState.intensity=inten??1;
+  const f=knobState.hue?`hue-rotate(${knobState.hue.toFixed(0)}deg)`:''; if(cv.style.filter!==f){ cv.style.filter=f; mediaLayer.style.filter=f; }
+  cam.knobZoom=zoom&&zoom.s>1.001?{s:zoom.s,x:zoom.at.x,y:zoom.at.y}:null;
+}
+function knobStart(k,st){   // для трансформации в OBS запоминаем исходное положение источника — от него считаем масштаб/сдвиг
+  if(k.target!=='obsTransform') return; const p=k.params||{}; st.base=null;
+  obsAction(async()=>{ if(!p.source) throw new Error('в ручке не указан источник'); const sceneName=p.scene||await obsCurrentScene();
+    const {sceneItemId}=await obsReq('GetSceneItemId',{sceneName,sourceName:p.source});
+    const {sceneItemTransform}=await obsReq('GetSceneItemTransform',{sceneName,sceneItemId}); st.base={sceneName,sceneItemId,tr:sceneItemTransform}; });
+}
+function knobApply(k,st,t,force){
+  const T=KNOB_TGT[k.target]; if(!T||!T.obs) return;   // локальные цели применяются в processKnobs
+  if(t-(st.errT||-1e9)<3000) return;                   // после ошибки OBS не спамим
+  if(!force&&(t-st.lastSend<70||Math.abs((st.lastOut??-1e9)-st.out)<T.eps)) return; st.lastSend=t; st.lastOut=st.out;
+  const p=k.params||{}, v=st.out;
+  (async()=>{
+    if(k.target==='obsVolume'){ if(!p.input) throw new Error('в ручке не указан источник звука'); await obsReq('SetInputVolume',{inputName:p.input,inputVolumeMul:clamp(v,0,20)}); }
+    else if(k.target==='obsFilter'){ if(!p.source||!p.filter||!p.key) throw new Error('в ручке укажи источник, фильтр и ключ настройки');
+      await obsReq('SetSourceFilterSettings',{sourceName:p.source,filterName:p.filter,filterSettings:{[p.key]:v},overlay:true}); }
+    else if(k.target==='obsTransform'){ const b=st.base; if(!b) return; const tr=b.tr, out={};
+      if(p.prop==='rotation') out.rotation=(tr.rotation||0)+v;
+      else if(p.prop==='x') out.positionX=tr.positionX+v; else if(p.prop==='y') out.positionY=tr.positionY+v;
+      else { // масштаб вокруг видимого центра: alignment — биты 1 лево, 2 право, 4 верх, 8 низ (5 = левый верх, 0 = центр)
+        const al=tr.alignment??5, ax=(al&1)?0:(al&2)?1:0.5, ay=(al&4)?0:(al&8)?1:0.5;
+        if(tr.boundsType&&tr.boundsType!=='OBS_BOUNDS_NONE'){ const w0=tr.boundsWidth,h0=tr.boundsHeight; out.boundsWidth=w0*v; out.boundsHeight=h0*v;
+          out.positionX=tr.positionX+(0.5-ax)*(w0-w0*v); out.positionY=tr.positionY+(0.5-ay)*(h0-h0*v); }
+        else { const w0=tr.sourceWidth*tr.scaleX,h0=tr.sourceHeight*tr.scaleY; out.scaleX=tr.scaleX*v; out.scaleY=tr.scaleY*v;
+          out.positionX=tr.positionX+(0.5-ax)*(w0-w0*v); out.positionY=tr.positionY+(0.5-ay)*(h0-h0*v); } }
+      await obsReq('SetSceneItemTransform',{sceneName:b.sceneName,sceneItemId:b.sceneItemId,sceneItemTransform:out}); }
+  })().catch(e=>{ st.errT=now(); obsFail(e); });
+}
+
+// ====================== Физика: эмоуты летают, рукой их можно сбить или поймать ======================
+// Тела — эмодзи или картинки (эмоуты Twitch). Ладонь — круглый коллайдер со скоростью: открытой рукой отбиваешь,
+// кулаком или щепоткой ловишь (+1). Источники: Twitch-чат, эффект «Выпустить эмоуты», кнопка в настройках.
+const phys={bodies:[],caught:0,imgs:new Map()};
+function physImg(url){ let i=phys.imgs.get(url); if(!i){ i=new Image(); i.crossOrigin='anonymous'; i.src=url; phys.imgs.set(url,i); } return i; }
+function physSpawn(o){
+  const S=cfg.settings.phys; if(!S.enabled) return null;
+  if(phys.bodies.length>=S.max) phys.bodies.shift();
+  const size=o.size||S.size, r=size*0.45;
+  const b={ch:o.ch||null,img:o.url?physImg(o.url):null,size,r,x:o.x??rnd(r,W-r),y:o.y??(S.gravity>0?-r:rnd(r,H-r)),
+    vx:o.vx??rnd(-250,250),vy:o.vy??(S.gravity>0?rnd(50,200):rnd(-250,250)),rot:rnd(-0.4,0.4),vr:rnd(-1.5,1.5),age:0,life:o.life||S.life,hit:0};
+  phys.bodies.push(b); return b;
+}
+function physStep(dt,t){
+  const S=cfg.settings.phys; if(!phys.bodies.length) return;
+  const G=S.gravity*1200, hs=[...handLm].filter(([,h])=>t-h.t<400);
+  for(let i=phys.bodies.length-1;i>=0;i--){ const b=phys.bodies[i]; b.age+=dt;
+    if(b.age>b.life||b.dead){ phys.bodies.splice(i,1); continue; }
+    b.vy+=G*dt; const k=Math.exp(-(S.gravity>0?0.15:0.35)*dt); b.vx*=k; b.vy*=k; b.x+=b.vx*dt; b.y+=b.vy*dt; b.rot+=b.vr*dt;
+    if(b.x<b.r){ b.x=b.r; b.vx=Math.abs(b.vx)*S.bounce; } else if(b.x>W-b.r){ b.x=W-b.r; b.vx=-Math.abs(b.vx)*S.bounce; }
+    if(b.y>H-b.r){ b.y=H-b.r; b.vy=-Math.abs(b.vy)*S.bounce; b.vr*=0.9; if(S.gravity>0&&Math.abs(b.vy)<40) b.vy=0; }
+    else if(b.y<b.r&&(S.gravity<=0||b.vy<0)){ b.y=b.r; b.vy=Math.abs(b.vy)*S.bounce; }
+    for(const [hk,h] of hs){ const R=h.sc*0.75, dx=b.x-h.c.x, dy=b.y-h.c.y, d=Math.hypot(dx,dy); if(d>=R+b.r) continue;
+      const fist=S.catchFist&&(activeNow.get('Closed_Fist')||[]).some(a=>a.hand===hk), pinch=h.m.pinch<0.35;
+      if((fist||pinch)&&b.age>0.3){ // поймал
+        b.dead=true; phys.caught++; playSound('pop');
+        for(let q=0;q<24;q++){ const ang=rnd(0,6.283), sp=rnd(100,400); fx.push(particle({kind:'dot',x:b.x,y:b.y,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,drag:2,life:0.5,r:2.5,color:'#ffd23f',shrink:true,fade:0.3})); }
+        const bx=b.x, by=b.y; fx.push(entity(1,function(){ g.save(); g.globalAlpha=1-this.age; g.font='700 28px system-ui,sans-serif'; g.textAlign='center'; g.fillStyle='#fff';
+          g.strokeStyle='rgba(0,0,0,.7)'; g.lineWidth=4; g.strokeText('+1',bx,by-this.age*60); g.fillText('+1',bx,by-this.age*60); g.restore(); }));
+        break; }
+      // отбил: выталкиваем из ладони и отражаем относительную скорость, добавляя скорость руки
+      const nx=d?dx/d:0, ny=d?dy/d:-1; b.x=h.c.x+nx*(R+b.r); b.y=h.c.y+ny*(R+b.r);
+      const rel=(b.vx-h.vx)*nx+(b.vy-h.vy)*ny; if(rel<0){ b.vx-=(1+S.bounce)*rel*nx; b.vy-=(1+S.bounce)*rel*ny; }
+      b.vx+=h.vx*0.6; b.vy+=h.vy*0.6; b.vr+=rnd(-3,3);
+      if(Math.hypot(h.vx,h.vy)>250&&t-b.hit>150){ b.hit=t; playSound('pop');
+        for(let q=0;q<8;q++) fx.push(particle({kind:'spark',x:b.x-nx*b.r,y:b.y-ny*b.r,vx:nx*rnd(100,400)+rnd(-100,100),vy:ny*rnd(100,400)+rnd(-100,100),drag:2,life:0.35,r:2,color:'#ffffff',fade:0.2})); }
+    }
+  }
+}
+function physDraw(){
+  for(const b of phys.bodies){ g.save(); g.globalAlpha=clamp(Math.min(b.age*4,(b.life-b.age)/0.6),0,1); g.translate(b.x,b.y); g.rotate(b.rot);
+    if(b.img){ if(b.img.complete&&b.img.naturalWidth){ const s=b.size/Math.max(b.img.naturalWidth,b.img.naturalHeight), w=b.img.naturalWidth*s, h=b.img.naturalHeight*s; g.drawImage(b.img,-w/2,-h/2,w,h); } }
+    else { g.font=`${b.size}px ${EMOJI_FONT}`; g.textAlign='center'; g.textBaseline='middle'; g.fillText(b.ch,0,0); }
+    g.restore(); }
+}
+
+// ====================== Twitch-чат: эмоуты и эмодзи из сообщений ======================
+// Анонимное чтение IRC (justinfan), без токена. Эмоуты Twitch берутся из тега emotes и грузятся с CDN; эмодзи — из текста.
+const twitch={ws:null,state:'off',err:'',retryT:null,chan:''};
+function twitchStatusText(){ return {off:'выключено',connecting:'подключаюсь…',ok:`#${twitch.chan} ✓`,error:twitch.err||'ошибка'}[twitch.state]; }
+function twitchSet(state,err=''){ twitch.state=state; twitch.err=err; const e=document.getElementById('tw-status'); if(!e) return;
+  e.textContent=twitchStatusText(); e.className='pill '+(state==='ok'?'st-ok':state==='error'?'st-err':''); }
+function twitchConnect(){
+  clearTimeout(twitch.retryT); if(twitch.ws){ const w=twitch.ws; twitch.ws=null; try{ w.close(); }catch{} }
+  const chan=String(cfg.settings.chat.twitch||'').trim().replace(/^.*twitch\.tv\//i,'').replace(/^#/,'').replace(/[\/?#].*$/,'').toLowerCase(); twitch.chan=chan;
+  if(!chan||!cfg.settings.phys.enabled){ twitchSet('off'); return; }
+  let ws; try{ ws=new WebSocket('wss://irc-ws.chat.twitch.tv:443'); }catch(e){ twitchSet('error',e.message); return; }
+  twitch.ws=ws; twitchSet('connecting');
+  ws.onopen=()=>{ ws.send('CAP REQ :twitch.tv/tags'); ws.send('PASS SCHMOOPIIE'); ws.send('NICK justinfan'+Math.floor(rnd(10000,99999))); ws.send('JOIN #'+chan); };
+  ws.onmessage=ev=>{ for(const line of String(ev.data).split('\r\n')){ if(!line) continue;
+    if(line.startsWith('PING')){ ws.send('PONG :tmi.twitch.tv'); continue; }
+    if(/ JOIN #/.test(line)&&twitch.state!=='ok') twitchSet('ok');
+    const m=line.match(/^(?:@(\S+) )?:\S+ PRIVMSG #\S+ :(.*)$/); if(m) twitchMessage(m[1]||'',m[2]); } };
+  ws.onclose=()=>{ if(twitch.ws!==ws) return; twitch.ws=null; if(twitch.state!=='error') twitchSet('error','соединение потеряно, пробую снова…'); twitch.retryT=setTimeout(twitchConnect,5000); };
+}
+function twitchMessage(tags,text){
+  const C=cfg.settings.chat; if(!cfg.settings.phys.enabled) return; let n=0;
+  const tag=Object.fromEntries(tags.split(';').filter(Boolean).map(x=>{ const i=x.indexOf('='); return [x.slice(0,i),x.slice(i+1)]; }));
+  if(C.emotes&&tag.emotes) for(const part of tag.emotes.split('/')){ const [id,ranges]=part.split(':'); if(!id||!ranges) continue;
+    for(const _ of ranges.split(',')){ if(n++>=C.perMsg) break; physSpawn({url:`https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/3.0`}); } }
+  if(C.emoji) for(const tk of emojiTokens(text)){ if(!isEmoji(tk)) continue; if(n++>=C.perMsg) break; physSpawn({ch:tk}); }
 }
 
 // ====================== Рендер ======================
@@ -841,6 +1358,7 @@ function drawCamera(t){
   const f=frameSource(); if(f) updateLayout(f.w,f.h);
   if(!cfg.settings.showCamera||!f) return;
   g.save();
+  if(cam.knobZoom){ const z=cam.knobZoom; g.translate(z.x,z.y); g.scale(z.s,z.s); g.translate(-z.x,-z.y); }   // ручка «зум»
   if(cam.zoom){ const z=cam.zoom, k=(t-z.start)/z.dur;
     if(k>=1) cam.zoom=null; else { const s=1+z.amount*Math.sin(Math.PI*k); g.translate(z.x,z.y); g.scale(s,s); g.translate(-z.x,-z.y); } }
   if(cfg.settings.mirror){ g.translate(W,0); g.scale(-1,1); g.drawImage(f.el,W-layout.dx-layout.dw,layout.dy,layout.dw,layout.dh); }
@@ -861,6 +1379,41 @@ function drawSkeleton(){
   for(const h of hands){ const pts=h.lm.map(toScreen);
     g.beginPath(); for(const [a,b] of BONES){ g.moveTo(pts[a].x,pts[a].y); g.lineTo(pts[b].x,pts[b].y); } g.stroke();
     for(const p of pts){ g.beginPath(); g.arc(p.x,p.y,3.5,0,7); g.fill(); } }
+  g.restore();
+}
+const POSE_BONES=[[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[7,0],[0,8]];
+// Отладочный HUD поверх картинки: рамки рук с жестом и уверенностью, траектории, кольца удержания правил, лицо, поза, ручки
+function drawDebug(t){
+  const s=cfg.settings; g.save(); g.font='12px ui-monospace,Consolas,monospace'; g.textBaseline='top'; g.lineWidth=2;
+  const label=(x,y,lines,color)=>{ let w=0; for(const l of lines) w=Math.max(w,g.measureText(l).width);
+    g.fillStyle='rgba(0,0,0,.6)'; g.fillRect(x,y,w+10,lines.length*15+6); g.fillStyle=color; lines.forEach((l,i)=>g.fillText(l,x+5,y+3+i*15)); };
+  for(const [hk,h] of handLm){ if(t-h.t>400) continue; let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+    for(const p of h.pts){ x0=Math.min(x0,p.x); x1=Math.max(x1,p.x); y0=Math.min(y0,p.y); y1=Math.max(y1,p.y); }
+    const col=hk==='L'?'#34e1ff':'#ffd23f'; g.strokeStyle=col; g.strokeRect(x0-8,y0-8,x1-x0+16,y1-y0+16);
+    g.fillStyle='rgba(255,255,255,.2)'; g.fillRect(x0-8,y0-14,x1-x0+16,4); g.fillStyle=h.score>=s.minScore?'#3bceac':'#ff4d6d'; g.fillRect(x0-8,y0-14,(x1-x0+16)*clamp(h.score,0,1),4);
+    const act=[...activeNow].filter(([,arr])=>arr.some(a=>a.hand===hk)).map(([id])=>gestureLabel(id));
+    const lines=[`${hk} · ${h.gest} ${h.score.toFixed(2)}`, act.length?'▶ '+act.join(', '):'—',
+      `pinch ${h.m.pinch.toFixed(2)}  spread ${h.m.spread.toFixed(2)}  roll ${h.m.roll.toFixed(0)}°`, `скорость ${(Math.hypot(h.vx,h.vy)/W).toFixed(2)} шир/с`];
+    const near=[...liveDist].sort((a,b)=>a[1]-b[1])[0]; if(near){ const cg=cfg.customGestures.find(c=>c.id===near[0]); if(cg) lines.push(`⭐ ${cg.name}: ${near[1].toFixed(2)} / порог ${cg.threshold}`); }
+    label(x0-8,y1+12,lines,col);
+    const tr=tracks.get(hk); if(tr&&tr.length>1){ g.strokeStyle=col; g.globalAlpha=0.6; g.beginPath(); tr.forEach((p,i)=>i?g.lineTo(p.x*W,p.y*H):g.moveTo(p.x*W,p.y*H)); g.stroke(); g.globalAlpha=1; }
+    g.strokeStyle='#fff'; g.beginPath(); g.moveTo(h.c.x,h.c.y); g.lineTo(h.c.x+h.vx*0.15,h.c.y+h.vy*0.15); g.stroke();
+  }
+  for(const rule of cfg.rules){ if(!rule.enabled||isEventGesture(rule.gesture)) continue; const states=ruleState.get(rule.id); if(!states) continue;
+    for(const [hk,st] of states){ if(st.since==null||st.fired) continue; const k=clamp((t-st.since)/Math.max(1,rule.hold),0,1), a=anchors.get(rule.gesture+(hk==='*'?'':'@'+hk)); if(!a) continue;
+      g.lineWidth=4; g.strokeStyle='rgba(255,255,255,.25)'; g.beginPath(); g.arc(a.x,a.y,40,0,7); g.stroke();
+      g.strokeStyle='#7c5cff'; g.beginPath(); g.arc(a.x,a.y,40,-Math.PI/2,-Math.PI/2+k*2*Math.PI); g.stroke(); g.lineWidth=2;
+      g.font=`16px ${EMOJI_FONT}`; g.fillStyle='#fff'; g.fillText(EFFECTS[rule.effect]?.icon||'',a.x-8,a.y+46); g.font='12px ui-monospace,Consolas,monospace'; } }
+  if(faceNow.box&&t-faceNow.t<500){ const b=faceNow.box; g.strokeStyle='#b44dff'; g.strokeRect(b.x,b.y,b.w,b.h);
+    const top=Object.entries(faceNow.bs).filter(([k])=>k!=='_neutral').sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>`${k} ${v.toFixed(2)}`);
+    label(b.x+b.w+10,b.y,[`лицо · наклон ${faceNow.tilt.toFixed(0)}°`,...top],'#b44dff'); }
+  if(poseNow.pts&&t-poseNow.t<500){ const P=poseNow.pts, r=poseNow.raw; g.strokeStyle='rgba(59,206,172,.8)'; g.beginPath();
+    for(const [a,b] of POSE_BONES){ if((r[a].visibility??1)<0.5||(r[b].visibility??1)<0.5) continue; g.moveTo(P[a].x,P[a].y); g.lineTo(P[b].x,P[b].y); } g.stroke(); }
+  const ks=cfg.knobs.filter(k=>k.enabled); if(ks.length){ let y=H-20-ks.length*18;
+    for(const k of ks){ const st=knobState.st.get(k.id); g.fillStyle='rgba(0,0,0,.6)'; g.fillRect(10,y,260,16); g.fillStyle=st?.active?'#7c5cff':'#555'; g.fillRect(10,y,260*(st?.v??0),16);
+      g.fillStyle='#fff'; g.fillText(`${k.name||KNOB_SRC[k.source]?.name||k.source} → ${st?.out!=null?(+st.out).toFixed(2):'—'}`,14,y+2); y+=18; } }
+  if(lastEvent&&t-lastEvent.t<900){ const a=anchors.get(lastEvent.id+'@'+lastEvent.hand)||anchors.get(lastEvent.id);
+    if(a){ g.font='700 22px system-ui,sans-serif'; g.fillStyle='#fff'; g.strokeStyle='rgba(0,0,0,.8)'; g.lineWidth=4; const tx=gestureLabel(lastEvent.id); g.strokeText(tx,a.x-40,a.y-70); g.fillText(tx,a.x-40,a.y-70); } }
   g.restore();
 }
 function drawOverlayText(text, sub){
@@ -884,9 +1437,11 @@ function loop(){
   g.restore();
   drawGlitch(t);
   if(cfg.settings.showSkeleton||rec) drawSkeleton();
+  physStep(dt,t); physDraw();
   for(let i=fx.length-1;i>=0;i--){ if(!fx[i].update(dt)){ fx[i].dispose&&fx[i].dispose(); fx.splice(i,1); } }
   for(const e of fx) e.draw&&e.draw();
   if(fx.length>4000) for(const e of fx.splice(0,fx.length-4000)) e.dispose&&e.dispose();
+  if(cfg.settings.debug) drawDebug(t);
   if(rec){ if(t<rec.start) drawOverlayText(String(Math.ceil((rec.start-t)/1000)),`Приготовься: ${rec.hands===2?'две руки':'одна рука'} в кадре`);
     else drawOverlayText('Запись…',`Держи жест и чуть двигай рукой · кадров: ${rec.samples.length}`); }
   if(statusMsg&&(!obsMode||!$('#panel').classList.contains('hidden'))) drawOverlayText('Gesture FX',statusMsg);
@@ -898,12 +1453,21 @@ function loop(){
 // ====================== HUD ======================
 const obsMode=new URLSearchParams(location.search).has('obs');
 function updateHud(){
-  const hud=$('#hud'); const show=cfg.settings.showHud&&!(obsMode&&$('#panel').classList.contains('hidden'));
+  const hud=$('#hud'); const show=cfg.settings.showHud&&!(obsMode&&$('#panel').classList.contains('hidden')); const s=cfg.settings;
   hud.classList.toggle('hidden',!show);
   if(show){ const names=[...activeNow].map(([id,arr])=>gestureLabel(id)+(arr.length>1?` ×${arr.length}`:'')).join(', ')||'—';
-    hud.textContent=`FPS ${fps.toFixed(0)} · детект ${detRate.toFixed(0)}/с · рук: ${hands.length}${cfg.settings.obsWs.enabled?(obs.ready?' · OBS ✓':' · OBS ✗'):''}\nЖесты: ${names}`; }
+    const t=now(), parts=[`FPS ${fps.toFixed(0)}`,`детект ${detRate.toFixed(0)}/с`,`рук: ${hands.length}`];
+    if(s.face) parts.push(faceLm?(faceNow.box&&t-faceNow.t<500?'лицо ✓':'лицо —'):'лицо ⏳'); if(s.pose) parts.push(poseLm?(poseNow.pts&&t-poseNow.t<500?'тело ✓':'тело —'):'тело ⏳');
+    if(s.obsWs.enabled) parts.push(obs.ready?'OBS ✓':'OBS ✗'); if(twitch.state!=='off') parts.push(twitch.state==='ok'?'чат ✓':'чат ✗');
+    if(phys.bodies.length||phys.caught) parts.push(`эмоутов: ${phys.bodies.length}, поймано: ${phys.caught}`);
+    const knobs=cfg.knobs.filter(k=>k.enabled&&knobState.st.get(k.id)?.active).map(k=>`${k.name||KNOB_SRC[k.source]?.name}: ${(+knobState.st.get(k.id).out).toFixed(2)}`);
+    hud.textContent=parts.join(' · ')+`\nЖесты: ${names}`+(knobs.length?`\nРучки: ${knobs.join(' · ')}`:'')+(lastEvent&&t-lastEvent.t<1500?`\nСобытие: ${gestureLabel(lastEvent.id)}`:''); }
   if(curTab==='custom') for(const cg of cfg.customGestures){ const e=document.getElementById('ld-'+cg.id); if(!e) continue;
-    const d=liveDist.get(cg.id); e.textContent=d==null||!isFinite(d)?'сейчас: —':`сейчас: ${d.toFixed(2)}`; e.classList.toggle('hit',d<cg.threshold); }
+    const d=liveDist.get(cg.id); e.textContent=d==null||!isFinite(d)?'сейчас: —':`сейчас: ${d.toFixed(2)}`; e.classList.toggle('hit',d<cg.threshold);
+    const b=document.getElementById('lb-'+cg.id); if(b){ b.classList.toggle('on',d<cg.threshold); b.firstChild.style.width=(d==null||!isFinite(d)?0:clamp(100-d/(cg.threshold*2)*100,0,100))+'%'; } }
+  if(curTab==='knobs') for(const k of cfg.knobs){ const e=document.getElementById('kv-'+k.id); if(!e) continue; const st=knobState.st.get(k.id), S=KNOB_SRC[k.source];
+    e.textContent=st?.raw==null?'сейчас: — (условие не выполнено)':`сейчас: ${S?.fmt?S.fmt(st.raw):st.raw.toFixed(2)} → ${(+st.out).toFixed(2)}`; e.classList.toggle('hit',!!st?.active);
+    const b=document.getElementById('kb-'+k.id); if(b){ b.classList.toggle('on',!!st?.active); b.firstChild.style.width=((st?.v??0)*100)+'%'; } }
 }
 
 // ====================== UI ======================
@@ -914,16 +1478,22 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
 function togglePanel(force){ const p=$('#panel'); const hide=force!=null?!force:!p.classList.contains('hidden'); p.classList.toggle('hidden',hide);
   $('#gear').classList.toggle('hidden',!hide||obsMode); audio(); }
 $('#gear').onclick=()=>togglePanel(true); $('#close').onclick=()=>togglePanel(false);
-addEventListener('keydown',e=>{ if(e.target.matches('input,textarea,select')) return; if(e.key==='h'||e.key==='H'||e.key==='р'||e.key==='Р') togglePanel(); });
+addEventListener('keydown',e=>{ if(e.target.matches('input,textarea,select')) return;
+  if(e.key==='h'||e.key==='H'||e.key==='р'||e.key==='Р') togglePanel();
+  if((e.key==='c'||e.key==='C'||e.key==='с'||e.key==='С')&&snapTarget&&!$('#panel').classList.contains('hidden')&&curTab==='custom') snapshotSample(snapTarget); });
 addEventListener('pointerdown',()=>audio(),{once:true});
 
-function gestureSelect(value,onchange){
-  const s=el('select',{class:'grow',onchange:e=>onchange(e.target.value)});
-  const og1=el('optgroup',{label:'Встроенные'}); for(const [id,b] of Object.entries(BUILTIN)) og1.append(el('option',{value:id,selected:id===value},`${b.icon} ${b.name}`));
-  s.append(og1);
-  if(cfg.customGestures.length){ const og2=el('optgroup',{label:'Мои жесты'});
-    for(const c of cfg.customGestures) og2.append(el('option',{value:'c:'+c.id,selected:'c:'+c.id===value},`⭐ ${c.name}`)); s.append(og2); }
-  if(!BUILTIN[value]&&!cfg.customGestures.some(c=>'c:'+c.id===value)) s.prepend(el('option',{value,selected:true},'(удалённый жест)'));
+// opts.any — добавить пункт «любой жест / рука в кадре» (для ручек); opts.noCombo — без комбо (шаги комбо)
+function gestureSelect(value,onchange,opts={}){
+  const s=el('select',{class:'grow',onchange:e=>onchange(e.target.value)}), S=cfg.settings;
+  if(opts.any) s.append(el('option',{value:'*',selected:value==='*'},'— любой жест / просто рука (лицо) в кадре'));
+  const titles={hand:'Рука',dyn:'Движение — срабатывает сразу, без удержания',face:'Лицо'+(S.face||S.pose?'':' — включи модель лица в настройках'),pose:'Тело'+(S.pose?'':' — включи модель позы в настройках')};
+  for(const grp of ['hand','dyn','face','pose']){ const og=el('optgroup',{label:titles[grp]});
+    for(const [id,b] of Object.entries(BUILTIN)) if((b.group||'hand')===grp) og.append(el('option',{value:id,selected:id===value},`${b.icon} ${b.name}`)); s.append(og); }
+  const mine=cfg.customGestures.filter(c=>!c.negative&&!(opts.noCombo&&c.kind==='combo'));
+  if(mine.length){ const og2=el('optgroup',{label:'Мои жесты'});
+    for(const c of mine) og2.append(el('option',{value:'c:'+c.id,selected:'c:'+c.id===value},`${c.kind==='combo'?'🔗':'⭐'} ${c.name}`)); s.append(og2); }
+  if(value!=='*'&&!BUILTIN[value]&&!cfg.customGestures.some(c=>'c:'+c.id===value)) s.prepend(el('option',{value,selected:true},'(удалённый жест)'));
   return s;
 }
 let pickerGroup=0;
@@ -1005,12 +1575,15 @@ function renderRules(){
     const snd=el('select',{onchange:ev=>{rule.sound=ev.target.value;save();}});
     for(const [k,l] of Object.entries(SOUNDS)) snd.append(el('option',{value:k,selected:k===rule.sound},l));
     card.append(el('div',{class:'row'},el('label',{},'Звук'),snd));
+    const ev=isEventGesture(rule.gesture);
     card.append(el('div',{class:'row'},
-      el('label',{},'Удержание, мс'),el('input',{type:'number',value:rule.hold,onchange:ev=>{rule.hold=+ev.target.value||0;save();}}),
+      el('label',{title:ev?'Это событие (движение или комбо): срабатывает сразу, удержание не используется':null},ev?'Удержание — нет':'Удержание, мс'),
+      el('input',{type:'number',value:rule.hold,disabled:ev,onchange:ev=>{rule.hold=+ev.target.value||0;save();}}),
       el('span',{class:'hint'},'Кулдаун'),el('input',{type:'number',value:rule.cooldown,onchange:ev=>{rule.cooldown=+ev.target.value||0;save();}})));
-    card.append(el('div',{class:'row'},el('label',{},''),
+    if(e?.held) card.append(el('p',{class:'hint'},'Эффект живёт, пока держишь жест, и гаснет, когда отпустишь. «Повторять» здесь не нужно.'));
+    else card.append(el('div',{class:'row'},el('label',{},''),
       el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:rule.repeat,onchange:ev=>{rule.repeat=ev.target.checked;save();}}),' повторять, пока держу жест')));
-    if(e?.anchored) card.append(el('div',{class:'row'},el('label',{},''),
+    if(e?.anchored&&!e.twoHands) card.append(el('div',{class:'row'},el('label',{},''),
       el('label',{style:'min-width:0;color:var(--text)',title:'Один и тот же жест двумя руками — эффект из каждой руки'},
         el('input',{type:'checkbox',checked:rule.perHand!==false,onchange:ev=>{rule.perHand=ev.target.checked;save();}}),' с каждой руки отдельно')));
     root.append(card);
@@ -1021,28 +1594,62 @@ function renderRules(){
 function renderCustom(){
   const root=$('#tab-custom'); root.innerHTML='';
   root.append(el('h3',{},'Записать новый жест'));
-  const name=el('input',{type:'text',class:'grow',placeholder:'Название, например «Рога 🤘»'});
-  const hs=el('select',{},el('option',{value:'1'},'одна рука'),el('option',{value:'2'},'две руки'));
+  if(formTarget.gestureId&&!cfg.customGestures.some(c=>c.id===formTarget.gestureId)) formTarget={name:'Мой жест',hands:1};
+  const reset=()=>{ formTarget={name:name.value.trim()||'Мой жест',hands:+hs.value}; snapTarget=formTarget; };
+  const name=el('input',{type:'text',class:'grow',value:formTarget.gestureId?'':formTarget.name==='Мой жест'?'':formTarget.name,placeholder:formTarget.gestureId?'кадры идут в «'+formTarget.name+'» — смени название для нового':'Название, например «Рога 🤘»',oninput:reset,
+    onkeydown:e=>{ if(e.key==='Enter'||e.key==='Escape') e.target.blur(); }});   // Enter — убрать фокус, чтобы работала клавиша C
+  const hs=el('select',{onchange:reset},el('option',{value:'1',selected:formTarget.hands===1},'одна рука'),el('option',{value:'2',selected:formTarget.hands===2},'две руки'));
   root.append(el('div',{class:'row'},name),el('div',{class:'row'},hs,
-    el('button',{class:'b p',onclick:()=>startRecording({name:name.value.trim()||'Мой жест',hands:+hs.value})},'● Записать')));
-  root.append(el('p',{class:'hint'},'После нажатия будет 3 секунды на подготовку, затем 2,5 секунды записи. Держи жест и слегка поворачивай руку — так распознавание станет устойчивее. Лучше записать 2–3 раза в разных положениях («+ кадры»).'));
+    el('button',{class:'b p',onclick:()=>startRecording({name:name.value.trim()||formTarget.name,hands:+hs.value})},'● Записать'),
+    el('button',{class:'b',title:'Один кадр прямо сейчас. Клавиша C — то же самое, пока открыта эта вкладка',onclick:()=>{ if(!formTarget.gestureId&&name.value.trim()) formTarget.name=name.value.trim(); snapTarget=formTarget; snapshotSample(formTarget); }},'📸 Кадр (C)')));
+  root.append(el('p',{class:'hint'},'«Записать» — 3 секунды на подготовку, затем 2,5 секунды кадров: держи жест и слегка поворачивай руку. «Кадр» — обучение по примеру: показал жест, нажал C, и так 10–20 раз в разных положениях; кадры копятся в один жест, пока не сменишь название.'));
+  root.append(el('div',{class:'row'},
+    el('button',{class:'b',title:'Записать позы, которые жестом НЕ являются: обычное положение рук, почёсывания, микрофон…',onclick:()=>startRecording({negative:true,hands:1})},'🚫 Записать фон (не жест)'),
+    el('span',{class:'hint'},'фон глушит ложные срабатывания своих жестов')));
   root.append(el('h3',{},'Мои жесты'));
-  if(!cfg.customGestures.length) root.append(el('p',{class:'hint'},'Пока пусто.'));
-  cfg.customGestures.forEach((cg,idx)=>{
+  const statics=cfg.customGestures.filter(c=>c.kind!=='combo');
+  if(!statics.length) root.append(el('p',{class:'hint'},'Пока пусто.'));
+  statics.forEach(cg=>{
     const thrVal=el('span',{class:'pill'},cg.threshold.toFixed(2));
-    root.append(el('div',{class:'card'},
-      el('div',{class:'row'},el('input',{type:'text',class:'grow',value:cg.name,onchange:e=>{cg.name=e.target.value||'Мой жест';save();renderRules();}}),
+    const card=el('div',{class:'card'},
+      el('div',{class:'row'},el('input',{type:'text',class:'grow',value:cg.name,onchange:e=>{cg.name=e.target.value||'Мой жест';save();renderRules();renderKnobs();}}),
+        cg.negative?el('span',{class:'pill',title:'Не срабатывает, только голосует против'},'фон'):null,
         el('span',{class:'pill'},cg.hands===2?'2 руки':'1 рука'),el('span',{class:'pill'},`${cg.samples.length} кадров`)),
       el('div',{class:'row'},el('label',{},'Порог'),
         el('input',{type:'range',min:'0.05',max:'0.8',step:'0.01',value:cg.threshold,oninput:e=>{cg.threshold=+e.target.value;thrVal.textContent=cg.threshold.toFixed(2);save();}}),
         thrVal,el('span',{class:'live',id:'ld-'+cg.id},'сейчас: —')),
+      el('div',{class:'row'},el('label',{},'Похожесть'),el('div',{class:'bar',id:'lb-'+cg.id},el('i'))),
       el('div',{class:'row'},
-        el('button',{class:'b',onclick:()=>startRecording({gestureId:cg.id,hands:cg.hands})},'+ кадры'),
-        el('button',{class:'b',onclick:()=>{cfg.rules.push({id:uid(),enabled:true,gesture:'c:'+cg.id,effect:'burst',params:{},sound:'whoosh',hold:350,cooldown:2500,repeat:false});save();renderRules();toast('Правило добавлено — настрой его во вкладке «Правила»');}},'→ в правило'),
-        el('button',{class:'b d',onclick:()=>{ if(!confirm(`Удалить жест «${cg.name}»?`)) return; cfg.customGestures.splice(idx,1);
+        el('button',{class:'b',onclick:()=>startRecording({gestureId:cg.id,hands:cg.hands,negative:cg.negative})},'+ кадры'),
+        el('button',{class:'b',title:'Один кадр сейчас (или клавиша C, если выбрать этот жест)',onclick:()=>{ snapTarget={gestureId:cg.id,hands:cg.hands,negative:cg.negative,name:cg.name}; snapshotSample(snapTarget); }},'📸'),
+        cg.negative?null:el('button',{class:'b',onclick:()=>{cfg.rules.push({id:uid(),enabled:true,gesture:'c:'+cg.id,effect:'burst',params:{},sound:'whoosh',hold:350,cooldown:2500,repeat:false});save();renderRules();toast('Правило добавлено — настрой его во вкладке «Правила»');}},'→ в правило'),
+        el('button',{class:'b d',onclick:()=>{ if(!confirm(`Удалить жест «${cg.name}»?`)) return; cfg.customGestures=cfg.customGestures.filter(x=>x!==cg);
+          cfg.rules=cfg.rules.filter(r=>r.gesture!=='c:'+cg.id); save(); renderCustom(); renderRules(); renderKnobs(); }},'Удалить')));
+    root.append(card);
+  });
+  root.append(el('p',{class:'hint'},'«Сейчас» — расстояние до ближайшего записанного кадра (меньше — похожее); жест активен, когда оно ниже порога и подсвечено зелёным. С включённым k-NN (Настройки → Распознавание) похожие жесты голосуют между собой, и побеждает один — так «рога» не путаются с «виктори».'));
+  // ---- комбо ----
+  root.append(el('h3',{},'Комбо: жесты подряд'));
+  root.append(el('p',{class:'hint'},'Цепочка из 2–3 жестов одной рукой (или подряд на лице) в заданное время: ✊ → ✋ или ✋ → свайп вправо. Комбо — событие: срабатывает сразу, без удержания.'));
+  const combos=cfg.customGestures.filter(c=>c.kind==='combo');
+  combos.forEach(cg=>{
+    const steps=el('div',{class:'steps'});
+    const drawSteps=()=>{ steps.innerHTML=''; cg.steps.forEach((st,i)=>{ if(i) steps.append('→');
+        steps.append(gestureSelect(st,v=>{cg.steps[i]=v;save();},{noCombo:true}));
+        if(cg.steps.length>2) steps.append(el('button',{class:'b i d',title:'Убрать шаг',onclick:()=>{cg.steps.splice(i,1);save();drawSteps();}},'✕')); });
+      if(cg.steps.length<3) steps.append(el('button',{class:'b i',onclick:()=>{cg.steps.push('Open_Palm');save();drawSteps();}},'+ шаг')); };
+    drawSteps();
+    root.append(el('div',{class:'card'},
+      el('div',{class:'row'},el('input',{type:'text',class:'grow',value:cg.name,onchange:e=>{cg.name=e.target.value||'Комбо';save();renderRules();}}),el('span',{class:'pill'},'комбо')),
+      steps,
+      el('div',{class:'row'},el('label',{},'Между шагами, мс'),el('input',{type:'number',min:'200',step:'100',value:cg.gap,onchange:e=>{cg.gap=clamp(+e.target.value||1500,200,10000);save();}}),
+        el('span',{class:'live',id:'ld-'+cg.id},'')),
+      el('div',{class:'row'},
+        el('button',{class:'b',onclick:()=>{cfg.rules.push({id:uid(),enabled:true,gesture:'c:'+cg.id,effect:'fireworks',params:{},sound:'boom',hold:0,cooldown:2500,repeat:false});save();renderRules();toast('Правило добавлено — настрой его во вкладке «Правила»');}},'→ в правило'),
+        el('button',{class:'b d',onclick:()=>{ if(!confirm(`Удалить комбо «${cg.name}»?`)) return; cfg.customGestures=cfg.customGestures.filter(x=>x!==cg);
           cfg.rules=cfg.rules.filter(r=>r.gesture!=='c:'+cg.id); save(); renderCustom(); renderRules(); }},'Удалить'))));
   });
-  root.append(el('p',{class:'hint'},'«Сейчас» — насколько текущая поза руки похожа на жест (меньше — похожее). Жест срабатывает, когда значение ниже порога и подсвечено зелёным. Ложные срабатывания — уменьши порог; не срабатывает — увеличь или добавь кадры.'));
+  root.append(el('div',{class:'row'},el('button',{class:'b p',onclick:()=>{ cfg.customGestures.push({id:uid(),kind:'combo',name:'Комбо '+(combos.length+1),steps:['Closed_Fist','Open_Palm'],gap:1500,hands:0,samples:[]}); save(); renderCustom(); renderRules(); }},'+ Добавить комбо')));
 }
 function renderLibrary(){
   const root=$('#tab-library'); root.innerHTML='';
@@ -1071,8 +1678,8 @@ function renderLibrary(){
           el('button',{class:'b i d',title:'Удалить',onclick:async()=>{ if(!confirm(`Удалить «${it.name}»?`)) return; await mediaDel(it.id); renderLibrary(); renderRules(); }},'✕')))); }
     root.append(mg); }
   root.append(el('h3',{},'Встроенные жесты'));
-  root.append(el('p',{class:'hint'},Object.values(BUILTIN).map(b=>`${b.icon} ${b.name}`).join(' · ')));
-  root.append(el('p',{class:'hint'},'Распознаются на обеих руках одновременно: разные жесты на разных руках запускают свои правила, одинаковый жест двумя руками — эффект из каждой руки (если в правиле включено «с каждой руки отдельно»).'));
+  for(const [grp,title] of Object.entries(GROUP_NAMES)) root.append(el('p',{class:'hint'},el('b',{},title+': '),Object.values(BUILTIN).filter(b=>(b.group||'hand')===grp).map(b=>`${b.icon} ${b.name}`).join(' · ')));
+  root.append(el('p',{class:'hint'},'Жесты руки распознаются на обеих руках одновременно: разные жесты на разных руках запускают свои правила, одинаковый жест двумя руками — эффект из каждой руки (если в правиле включено «с каждой руки отдельно»). Движения — события без удержания. Лицо и тело требуют своих моделей (Настройки → Лицо и тело).'));
   root.append(el('h3',{},'Дефолтный набор'));
   root.append(el('p',{class:'hint'},'👍 конфетти · 👎 дождь 💀 · ✌️ неон-рамка · ✋ взрыв · ✊ молния + тряска · ☝️ шлейф · 🤟 «СПАСИБО, ЧАТ!» · 🫶 и 🫰 сердечки'));
   root.append(el('div',{class:'row'},
@@ -1121,7 +1728,42 @@ function renderSettings(){
   root.append(el('div',{class:'row'},el('label',{},'Уверенность'),
     el('input',{type:'range',min:'0.3',max:'0.95',step:'0.01',value:s.minScore,oninput:e=>{s.minScore=+e.target.value;ms.textContent=s.minScore.toFixed(2);save();}}),ms));
   root.append(chk('customPriority','Свои жесты важнее встроенных (на той же руке)'));
+  root.append(chk('knn','k-NN: свои жесты голосуют, срабатывает один победитель (с учётом «фона»)'));
+  root.append(el('div',{class:'row'},el('label',{title:'Поза должна быть видна столько детекций подряд, прежде чем считаться активной. Защита от одиночных ложных кадров; добавляет задержку'},'Стабильность'),
+    el('input',{type:'number',min:'1',max:'10',value:s.stableFrames,onchange:e=>{s.stableFrames=clamp(+e.target.value||1,1,10);save();}}),el('span',{class:'hint'},'кадров подряд (1 — сразу)')));
   root.append(chk('gpu','Использовать GPU (нужна перезагрузка страницы)'));
+  root.append(chk('debug','Отладка поверх картинки: рамки рук, уверенность, траектории, кольца удержания, лицо, поза, ручки'));
+  root.append(el('h3',{},'Движения (свайп, круг, бросок)'));
+  const D=s.dyn;
+  root.append(el('div',{class:'row'},el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:D.enabled,onchange:e=>{D.enabled=e.target.checked;save();}}),' Распознавать движения руки')));
+  const num=(obj,key,label,min,max,step,hint)=>el('div',{class:'row'},el('label',{},label),el('input',{type:'number',min,max,step,value:obj[key],onchange:e=>{obj[key]=clamp(+e.target.value||obj[key],min,max);save();}}),hint?el('span',{class:'hint'},hint):null);
+  root.append(num(D,'swipeDist','Свайп: путь',0.05,0.8,0.01,'доля ширины экрана'),num(D,'swipeTime','Свайп: время, мс',150,1500,50),
+    num(D,'circleTime','Круг: время, мс',500,3000,100),num(D,'throwSpeed','Бросок: скорость',0.3,5,0.1,'ширин экрана в секунду'));
+  root.append(el('p',{class:'hint'},'Свайп — быстрое движение почти по прямой вдоль одной оси. Круг — почти полный оборот за отведённое время. Бросок — сжал кулак, резко двинул руку и раскрыл ладонь: эффект «Фаерболл» летит в сторону броска.'));
+  root.append(el('h3',{},'Лицо и тело'));
+  root.append(el('div',{class:'row'},el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:s.face,onchange:e=>{s.face=e.target.checked;save();initExtraModels();renderRules();}}),' Модель лица: рот, улыбка, брови, подмигивание, кивок, фейспалм, лазеры из глаз')));
+  const fs=el('span',{class:'pill'},s.faceSens.toFixed(2));
+  root.append(el('div',{class:'row'},el('label',{},'Чувствительность'),el('input',{type:'range',min:'0.2',max:'0.9',step:'0.01',value:s.faceSens,oninput:e=>{s.faceSens=+e.target.value;fs.textContent=s.faceSens.toFixed(2);save();}}),fs));
+  root.append(el('div',{class:'row'},el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:s.pose,onchange:e=>{s.pose=e.target.checked;save();initExtraModels();renderRules();}}),' Модель позы: плечи, скрещённые руки, руки вверх, T-поза')));
+  const pse=el('span',{class:'pill'},s.poseSens.toFixed(2));
+  root.append(el('div',{class:'row'},el('label',{},'Чувствительность'),el('input',{type:'range',min:'0.1',max:'0.9',step:'0.01',value:s.poseSens,oninput:e=>{s.poseSens=+e.target.value;pse.textContent=s.poseSens.toFixed(2);save();}}),pse));
+  const me=el('select',{onchange:e=>{s.modelEvery=+e.target.value;save();}}); for(const [v,l] of [[1,'каждый кадр'],[2,'каждый 2-й'],[3,'каждый 3-й'],[4,'каждый 4-й']]) me.append(el('option',{value:v,selected:v===s.modelEvery},l));
+  root.append(el('div',{class:'row'},el('label',{},'Считать лицо/тело'),me,el('span',{class:'hint'},'реже — меньше нагрузка')));
+  root.append(el('p',{class:'hint'},'Каждая модель — ещё одна нейросеть на каждый кадр: на слабой машине включай по одной и снижай частоту. Модели грузятся из интернета при включении. Фейспалм работает от любой из них.'));
+  root.append(el('h3',{},'Физика и чат'));
+  const PH=s.phys, CH=s.chat;
+  root.append(el('div',{class:'row'},el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:PH.enabled,onchange:e=>{PH.enabled=e.target.checked;save();twitchConnect();}}),' Эмоуты летают по экрану: открытой рукой отбиваешь, кулаком или щепоткой ловишь')));
+  const gv=el('span',{class:'pill'},PH.gravity?PH.gravity.toFixed(2):'парят');
+  root.append(el('div',{class:'row'},el('label',{},'Гравитация'),el('input',{type:'range',min:'0',max:'1',step:'0.05',value:PH.gravity,oninput:e=>{PH.gravity=+e.target.value;gv.textContent=PH.gravity?PH.gravity.toFixed(2):'парят';save();}}),gv));
+  root.append(num(PH,'size','Размер, px',24,300,4),num(PH,'life','Живут, с',2,120,1),num(PH,'max','Не больше',5,300,5),num(PH,'bounce','Упругость',0.1,1,0.05));
+  root.append(el('div',{class:'row'},el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:PH.catchFist,onchange:e=>{PH.catchFist=e.target.checked;save();}}),' Ловить кулаком (щепоткой — всегда)'),
+    el('button',{class:'b',onclick:()=>{ for(let i=0;i<5;i++) physSpawn({ch:['😂','🔥','💀','👏','❤️'][i]}); }},'▶ выпустить 5')));
+  root.append(el('div',{class:'row'},el('label',{},'Twitch-канал'),el('input',{type:'text',class:'grow',value:CH.twitch,placeholder:'имя канала или ссылка',onchange:e=>{CH.twitch=e.target.value.trim();save();twitchConnect();}}),
+    el('span',{id:'tw-status',class:'pill'},twitchStatusText())));
+  root.append(el('div',{class:'row'},el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:CH.emotes,onchange:e=>{CH.emotes=e.target.checked;save();}}),' эмоуты Twitch'),
+    el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:CH.emoji,onchange:e=>{CH.emoji=e.target.checked;save();}}),' эмодзи из текста'),
+    el('span',{class:'hint'},'не больше'),el('input',{type:'number',min:'1',max:'20',value:CH.perMsg,onchange:e=>{CH.perMsg=clamp(+e.target.value||4,1,20);save();}}),el('span',{class:'hint'},'на сообщение')));
+  root.append(el('p',{class:'hint'},'Чат читается анонимно, без входа в аккаунт: нужен только канал. Эмоуты 7TV/BTTV/FFZ не распознаются — только стандартные эмоуты Twitch и обычные эмодзи. Эффект «Выпустить эмоуты» добавляет свои эмодзи в ту же физику по жесту.'));
   root.append(el('h3',{},'Звук'));
   const vv=el('span',{class:'pill'},Math.round(s.volume*100)+'%');
   root.append(el('div',{class:'row'},el('label',{},'Громкость'),
@@ -1158,17 +1800,69 @@ function exportCfg(){ const c=JSON.parse(JSON.stringify(cfg)); if(c.settings.obs
 function importConfig(text){
   try{ const c=JSON.parse(text); if(!c||!Array.isArray(c.rules)) throw new Error('нет rules');
     const d=defaultConfig(), pw=cfg.settings.obsWs?.password||'';
-    cfg={...d,...c,settings:{...d.settings,...(c.settings||{})},customGestures:Array.isArray(c.customGestures)?c.customGestures:[]};
-    cfg.settings.obsWs={...d.settings.obsWs,...(cfg.settings.obsWs||{})}; if(!cfg.settings.obsWs.password) cfg.settings.obsWs.password=pw;
-    save(); renderAll(); startCamera(); obsConnect(); toast('Конфиг загружен'); }catch(e){ toast('Не получилось: '+e.message); }
+    cfg={...d,...c,settings:mergeSettings(d.settings,c.settings),customGestures:Array.isArray(c.customGestures)?c.customGestures:[],knobs:Array.isArray(c.knobs)?c.knobs:[]};
+    if(!cfg.settings.obsWs.password) cfg.settings.obsWs.password=pw;
+    save(); renderAll(); startCamera(); obsConnect(); initExtraModels(); twitchConnect(); toast('Конфиг загружен'); }catch(e){ toast('Не получилось: '+e.message); }
 }
-function renderAll(){ renderRules(); renderCustom(); renderLibrary(); renderSettings(); }
+function renderKnobs(){
+  const root=$('#tab-knobs'); root.innerHTML='';
+  root.append(el('p',{class:'hint'},'Ручка — рука как регулятор, а не кнопка: пока выполняется условие, значение источника (зазор щепотки, высота или поворот руки, открытость рта…) переводится в диапазон цели — зум, громкость, параметр фильтра OBS, оттенок или интенсивность эффектов. Живое значение видно в карточке и в HUD.'));
+  cfg.knobs.forEach((k,idx)=>{
+    const S=KNOB_SRC[k.source]||KNOB_SRC.pinch, T=KNOB_TGT[k.target]||KNOB_TGT.zoomLocal;
+    const card=el('div',{class:'card'+(k.enabled?'':' off')});
+    card.append(el('div',{class:'row'},
+      el('input',{type:'checkbox',checked:k.enabled,title:'Включено',onchange:e=>{k.enabled=e.target.checked;card.classList.toggle('off',!k.enabled);save();}}),
+      el('input',{type:'text',class:'grow',value:k.name,placeholder:S.name+' → '+T.name,onchange:e=>{k.name=e.target.value.trim();save();}}),
+      el('button',{class:'b i d',title:'Удалить',onclick:()=>{cfg.knobs.splice(idx,1);knobState.st.delete(k.id);save();renderKnobs();}},'✕')));
+    const srcSel=el('select',{class:'grow',onchange:e=>{ k.source=e.target.value; const n=KNOB_SRC[k.source]; k.inMin=n.min; k.inMax=n.max; save(); renderKnobs(); }});
+    const og=(label,filter)=>{ const o=el('optgroup',{label}); for(const [id,v] of Object.entries(KNOB_SRC)) if(filter(v)) o.append(el('option',{value:id,selected:id===k.source},v.name)); return o; };
+    srcSel.append(og('Рука',v=>!v.two&&!v.face),og('Две руки',v=>v.two),og('Лицо (нужна модель лица)',v=>v.face));
+    card.append(el('div',{class:'row'},el('label',{},'Источник'),srcSel));
+    card.append(el('div',{class:'row'},el('label',{},''),el('div',{class:'bar',id:'kb-'+k.id},el('i')),el('span',{class:'live',id:'kv-'+k.id},'сейчас: —')));
+    if(!S.face&&!S.two){ const hsel=el('select',{onchange:e=>{k.hand=e.target.value;save();}});
+      for(const [v,l] of [['any','любая рука'],['L','левая в кадре'],['R','правая в кадре']]) hsel.append(el('option',{value:v,selected:v===k.hand},l));
+      card.append(el('div',{class:'row'},el('label',{},'Рука'),hsel)); }
+    card.append(el('div',{class:'row'},el('label',{title:'Ручка работает, только пока этот жест активен (на той же руке)'},'Условие'),gestureSelect(k.gate,v=>{k.gate=v;save();},{any:true})));
+    card.append(el('div',{class:'row'},el('label',{},'Вход от'),el('input',{type:'number',step:'any',value:k.inMin,onchange:e=>{k.inMin=+e.target.value||0;save();}}),
+      el('span',{class:'hint'},'до'),el('input',{type:'number',step:'any',value:k.inMax,onchange:e=>{k.inMax=+e.target.value||0;save();}}),
+      el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:!!k.invert,onchange:e=>{k.invert=e.target.checked;save();}}),' наоборот')));
+    const tgtSel=el('select',{class:'grow',onchange:e=>{ k.target=e.target.value; const n=KNOB_TGT[k.target]; k.outMin=n.min; k.outMax=n.max; k.resetTo=n.reset; k.params={}; save(); renderKnobs(); }});
+    for(const [id,v] of Object.entries(KNOB_TGT)) tgtSel.append(el('option',{value:id,selected:id===k.target},v.name));
+    card.append(el('div',{class:'row'},el('label',{},'Цель'),tgtSel));
+    for(const [pk,spec] of Object.entries(T.params||{})){
+      const ctl=paramInput(spec,k.params?.[pk]??spec.def,v=>{ k.params={...k.params,[pk]:v}; save();
+        if(pk==='prop'){ const d={scale:[1,2.2,1],rotation:[-45,45,0],x:[-300,300,0],y:[-300,300,0]}[v]; if(d){ [k.outMin,k.outMax,k.resetTo]=d; save(); renderKnobs(); } } });
+      card.append(el('div',{class:'row'},el('label',{},spec.label),ctl)); }
+    card.append(el('div',{class:'row'},el('label',{},'Выход от'),el('input',{type:'number',step:'any',value:k.outMin,onchange:e=>{k.outMin=+e.target.value||0;save();}}),
+      el('span',{class:'hint'},'до'),el('input',{type:'number',step:'any',value:k.outMax,onchange:e=>{k.outMax=+e.target.value||0;save();}})));
+    const rel=el('select',{onchange:e=>{k.release=e.target.value;save();}},el('option',{value:'reset',selected:k.release==='reset'},'вернуть к значению'),el('option',{value:'keep',selected:k.release==='keep'},'оставить как есть'));
+    card.append(el('div',{class:'row'},el('label',{},'Отпустил →'),rel,el('input',{type:'number',step:'any',value:k.resetTo,title:'Значение, к которому вернуться',onchange:e=>{k.resetTo=+e.target.value||0;save();}})));
+    const sm=el('span',{class:'pill'},(k.smooth??0.4).toFixed(2));
+    card.append(el('div',{class:'row'},el('label',{},'Плавность'),el('input',{type:'range',min:'0',max:'0.9',step:'0.05',value:k.smooth??0.4,oninput:e=>{k.smooth=+e.target.value;sm.textContent=k.smooth.toFixed(2);save();}}),sm));
+    if(T.obs) card.append(el('p',{class:'hint'},k.target==='obsTransform'?'Масштаб считается от положения источника в момент, когда ручка включилась, и центрируется по видимому центру. Для камеры в OBS укажи тот же источник, что в «Источник кадров».'
+      :k.target==='obsFilter'?'Ключ настройки — внутреннее имя параметра фильтра, например для «Размытие»: blur_amount или radius (зависит от плагина).':'Громкость как множитель: 0 — тишина, 1 — как было.'));
+    root.append(card);
+  });
+  root.append(el('div',{class:'row'},el('button',{class:'b p',onclick:()=>{cfg.knobs.push(newKnob());save();renderKnobs();}},'+ Добавить ручку')));
+  root.append(el('h3',{},'Пресеты'));
+  const pr=el('div',{class:'row'});
+  for(const p of KNOB_PRESETS) pr.append(el('button',{class:'b',onclick:()=>{ const k=newKnob({...p.k,params:{...p.k.params}}); if(k.target==='obsTransform'&&!k.params.source) k.params.source=cfg.settings.obsSource||''; cfg.knobs.push(k); save(); renderKnobs(); toast('Ручка добавлена'); }},p.label));
+  root.append(pr);
+  root.append(el('p',{class:'hint'},'Для «Высота руки → громкость» впиши источник звука в OBS. «Оттенок» и «интенсивность» действуют на эффекты этого оверлея. «Время удержания» растёт, пока держишь жест-условие — заряд перед выстрелом.'));
+}
+function renderAll(){ renderRules(); renderCustom(); renderKnobs(); renderLibrary(); renderSettings(); }
 
 // ====================== Старт ======================
 // Для консоли: GFX.fire('reaction',{emoji:'🔥'}), GFX.emojiTokens('👨‍👩‍👧🇷🇺'), GFX.cfg()
+// GFX.spawn('🔥') — тело в физику; GFX.chat('@emotes=25:0-4 :a!a@a PRIVMSG #c :Kappa 😂') — как будто пришло из чата
 window.GFX={cfg:()=>cfg,effects:EFFECTS,fire:(effect,params={},anchor)=>fireRule({effect,params,sound:'none'},anchor),
   emojiTokens,withTone,emojiRenders,groupEmoji,media:{add:mediaAdd,del:mediaDel,items:()=>mediaDB.items,resolve:mediaResolve},
-  _test:{setHands:h=>{hands=h;},computeActive,processRules,handFeature,toScreen,rules:()=>cfg.rules,fx}};
+  spawn:(ch,o={})=>physSpawn({ch,...o}),chat:line=>{ const m=String(line).match(/^(?:@(\S+) )?:\S+ PRIVMSG #\S+ :(.*)$/); if(m) twitchMessage(m[1]||'',m[2]); },
+  knobs:()=>cfg.knobs,knobState,
+  _test:{setHands:h=>{hands=h;},computeActive,processRules,handFeature,toScreen,rules:()=>cfg.rules,fx,
+    frame:(r,t,w,h)=>{ aspect=(w||16)/(h||9); updateLayout(w||1280,h||720); ingestHands(r,t); if(rec) recordStep(t); detCount++; processRules(t); },
+    face:(r,t)=>faceUpdate(r,t),pose:(r,t)=>poseUpdate(r,t),active:()=>activeNow,log:fireLog,hands:()=>hands,handLm,tracks,phys,events:dynEvents,
+    models:()=>({recognizer:!!recognizer,face:!!faceLm,pose:!!poseLm,status:statusMsg}),snapshot:snapshotSample,save,renderAll,twitchMessage}};
 document.body.classList.toggle('solid', !obsMode);
 if(obsMode) $('#gear').classList.add('hidden');
 renderAll();
@@ -1176,6 +1870,7 @@ requestAnimationFrame(loop);
 startCamera();
 initModel();
 obsConnect();
+twitchConnect();
 mediaLoad().then(()=>{ renderLibrary(); renderRules(); preloadRuleMedia(); });
 </script>
 </body>
