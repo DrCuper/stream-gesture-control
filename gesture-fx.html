@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gesture FX</title>
+<style>
+  :root{
+    --bg:#0e0f14; --panel:rgba(18,19,26,.94); --line:#2a2c38; --text:#e8e9f0; --muted:#8b8ea3;
+    --accent:#7c5cff; --accent2:#34e1ff; --danger:#ff4d6d; --ok:#3bceac;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:transparent;color:var(--text);
+    font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  body.solid{background:var(--bg)}
+  canvas#stage{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+  video{display:none}
+  #hud{position:fixed;left:10px;top:10px;padding:6px 10px;border-radius:8px;background:rgba(0,0,0,.55);
+    font:12px/1.4 ui-monospace,Consolas,monospace;pointer-events:none;white-space:pre}
+  #gear{position:fixed;right:12px;top:12px;width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
+    background:var(--panel);color:var(--text);font-size:18px;cursor:pointer}
+  #panel{position:fixed;right:0;top:0;bottom:0;width:400px;max-width:100vw;background:var(--panel);
+    border-left:1px solid var(--line);display:flex;flex-direction:column;backdrop-filter:blur(8px)}
+  .hidden{display:none!important}
+  #panel header{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  #panel header b{font-size:15px;flex:1}
+  .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .tabs button{flex:1;padding:10px 4px;background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);cursor:pointer;font:inherit}
+  .tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
+  .body{flex:1;overflow:auto;padding:12px 14px 40px}
+  .card{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;background:rgba(255,255,255,.02)}
+  .card.off{opacity:.5}
+  .row{display:flex;gap:8px;align-items:center;margin:6px 0;flex-wrap:wrap}
+  .row label{color:var(--muted);min-width:90px}
+  .grow{flex:1;min-width:0}
+  input,select,textarea{background:#1b1d27;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 7px;font:inherit}
+  input[type=number]{width:80px}
+  input[type=color]{width:42px;height:28px;padding:1px}
+  input[type=range]{flex:1}
+  textarea{width:100%;min-height:90px;font:11px ui-monospace,Consolas,monospace}
+  button.b{background:#232633;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px 10px;cursor:pointer;font:inherit}
+  button.b:hover{border-color:var(--accent)}
+  button.p{background:var(--accent);border-color:var(--accent)}
+  button.d{color:var(--danger)}
+  button.i{padding:4px 8px}
+  h3{margin:14px 0 8px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .hint{color:var(--muted);font-size:12px;margin:6px 0}
+  .pill{display:inline-block;padding:1px 7px;border-radius:99px;background:#232633;color:var(--muted);font-size:11px}
+  .live{font:11px ui-monospace,Consolas,monospace}
+  .live.hit{color:var(--ok)}
+  .st-ok{color:var(--ok)} .st-err{color:var(--danger)}
+  .fxgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .fxgrid .card{margin:0;display:flex;flex-direction:column;gap:6px}
+  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#232633;border:1px solid var(--line);
+    padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none}
+  #toast.show{opacity:1}
+  code{background:#1b1d27;padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<video id="video" playsinline muted></video>
+<canvas id="stage"></canvas>
+<div id="hud"></div>
+<button id="gear" title="Настройки (H)">⚙</button>
+<div id="panel" class="hidden">
+  <header><b>Gesture FX</b><span class="pill">H — скрыть</span><button class="b i" id="close">✕</button></header>
+  <div class="tabs">
+    <button data-tab="rules" class="on">Правила</button>
+    <button data-tab="custom">Мои жесты</button>
+    <button data-tab="library">Библиотека</button>
+    <button data-tab="settings">Настройки</button>
+  </div>
+  <div class="body" id="tab-rules"></div>
+  <div class="body hidden" id="tab-custom"></div>
+  <div class="body hidden" id="tab-library"></div>
+  <div class="body hidden" id="tab-settings"></div>
+</div>
+<div id="toast"></div>
+<datalist id="dl-obs-scenes"></datalist><datalist id="dl-obs-sources"></datalist><datalist id="dl-obs-inputs"></datalist>
+
+<script type="module">
+// ====================== Константы ======================
+const MP_VER = '1.2.0';
+const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
+const MODEL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
+const STORE_KEY = 'gesturefx.config.v1';
+const EMOJI_FONT = '"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+
+const BUILTIN = {
+  Thumb_Up:       {name:'Палец вверх',        icon:'👍'},
+  Thumb_Down:     {name:'Палец вниз',         icon:'👎'},
+  Victory:        {name:'Виктори',            icon:'✌️'},
+  Open_Palm:      {name:'Ладонь',             icon:'✋'},
+  Closed_Fist:    {name:'Кулак',              icon:'✊'},
+  Pointing_Up:    {name:'Указательный вверх', icon:'☝️'},
+  ILoveYou:       {name:'Я тебя люблю',       icon:'🤟'},
+  Two_Hand_Heart: {name:'Сердце двумя руками',icon:'🫶'},
+  Finger_Heart:   {name:'Сердечко пальцами',  icon:'🫰'},
+};
+
+const SOUNDS = {none:'без звука', pop:'поп', chime:'дзынь', boom:'бум', whoosh:'вжух', zap:'разряд'};
+
+// ====================== Утилиты ======================
+const $ = s => document.querySelector(s);
+const rnd = (a,b) => a + Math.random()*(b-a);
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const uid = () => Math.random().toString(36).slice(2,9);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'),2200); }
+function el(tag, attrs={}, ...kids){
+  const e=document.createElement(tag);
+  for(const [k,v] of Object.entries(attrs)){
+    if(k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if(k==='class') e.className=v;
+    else if(k==='html') e.innerHTML=v;
+    else if(v===true) e.setAttribute(k,'');
+    else if(v!==false && v!=null) e.setAttribute(k,v);
+  }
+  for(const k of kids.flat()) if(k!=null) e.append(k.nodeType?k:document.createTextNode(k));
+  return e;
+}
+
+// ====================== Эффекты ======================
+const cv = $('#stage'), g = cv.getContext('2d');
+let W=0, H=0;
+function resize(){ W=cv.width=innerWidth; H=cv.height=innerHeight; }
+addEventListener('resize', resize); resize();
+
+const fx = [];
+const cam = {shakeUntil:0, shakeAmp:0, shakeDur:1, zoom:null, glitchUntil:0};
+const tips = new Map();   // gestureId -> последняя позиция кончика указательного пальца
+const now = () => performance.now();
+
+const DRAW = {
+  confetti(){ g.save(); g.translate(this.x,this.y); g.rotate(this.rot); g.scale(Math.cos(this.age*this.flip),1);
+    g.fillStyle=this.color; g.fillRect(-this.w/2,-this.h/2,this.w,this.h); g.restore(); },
+  emoji(){ const s=this.size*(this.grow?Math.min(1,0.4+this.age*2):1);
+    g.save(); g.translate(this.x+Math.sin(this.age*3+this.ph)*(this.wob||0), this.y); g.rotate(this.rot||0);
+    g.font=`${s}px ${EMOJI_FONT}`; g.textAlign='center'; g.textBaseline='middle'; g.fillText(this.ch,0,0); g.restore(); },
+  dot(){ g.save(); g.globalCompositeOperation='lighter'; g.fillStyle=this.color; g.shadowColor=this.color; g.shadowBlur=12;
+    g.beginPath(); g.arc(this.x,this.y,this.r*(this.shrink?Math.max(0.1,1-this.age/this.life):1),0,Math.PI*2); g.fill(); g.restore(); },
+  spark(){ g.save(); g.globalCompositeOperation='lighter'; g.strokeStyle=this.color; g.lineWidth=this.r; g.lineCap='round';
+    g.beginPath(); g.moveTo(this.x,this.y); g.lineTo(this.x-this.vx*0.04,this.y-this.vy*0.04); g.stroke(); g.restore(); },
+};
+function particle(o){
+  o.age=0; o.delay=o.delay||0; o.fade=o.fade??0.6;
+  o.update=function(dt){
+    if(this.delay>0){ this.delay-=dt; return true; }
+    const k=Math.exp(-(this.drag||0)*dt); this.vx*=k; this.vy*=k;
+    this.vy+=(this.g||0)*dt; this.x+=this.vx*dt; this.y+=this.vy*dt;
+    if(this.vr) this.rot+=this.vr*dt;
+    this.age+=dt;
+    return this.age<this.life && this.y<H+150 && this.y>-400;
+  };
+  o.draw=function(){
+    if(this.delay>0) return;
+    g.globalAlpha=clamp((this.life-this.age)/this.fade,0,1)*(this.alpha??1);
+    DRAW[this.kind].call(this); g.globalAlpha=1;
+  };
+  return o;
+}
+function entity(life, draw, update){ return {age:0,life,update(dt){ this.age+=dt; update&&update.call(this,dt); return this.age<this.life; },draw}; }
+
+const P = { // описания параметров
+  count:(def)=>({label:'Количество',type:'number',def}),
+  duration:(def)=>({label:'Длительность, с',type:'number',def}),
+  color:(def)=>({label:'Цвет',type:'color',def}),
+  emoji:(def)=>({label:'Эмодзи',type:'text',def}),
+};
+
+const EFFECTS = {
+  confetti:{name:'Конфетти',icon:'🎉',sound:'pop',
+    params:{count:P.count(160), origin:{label:'Откуда',type:'select',options:{hand:'от руки',top:'сверху'},def:'hand'}},
+    run(p,a){ const cols=['#ff4d6d','#ffd23f','#3bceac','#4d9fff','#b44dff','#ffffff']; const top=p.origin==='top';
+      for(let i=0;i<p.count;i++) fx.push(particle({kind:'confetti',x:top?rnd(0,W):a.x,y:top?rnd(-60,-10):a.y,
+        vx:top?rnd(-60,60):rnd(-700,700),vy:top?rnd(80,280):rnd(-1150,-300),g:top?300:900,drag:top?0.4:1.5,
+        life:rnd(2.5,4.5),w:rnd(8,15),h:rnd(5,9),rot:rnd(0,6.3),vr:rnd(-8,8),flip:rnd(4,12),color:cols[i%cols.length],delay:top?rnd(0,1.2):0})); }},
+  hearts:{name:'Сердечки',icon:'💖',sound:'pop',
+    params:{emoji:P.emoji('❤️'),count:P.count(30)},
+    run(p,a){ const chars=[...p.emoji.trim()].length?p.emoji.trim().split(/\s+/):['❤️'];
+      for(let i=0;i<p.count;i++) fx.push(particle({kind:'emoji',ch:chars[i%chars.length],x:a.x+rnd(-70,70),y:a.y+rnd(-20,20),
+        vx:rnd(-40,40),vy:rnd(-380,-160),g:-40,life:rnd(2,3.2),size:rnd(28,64),wob:rnd(10,30),ph:rnd(0,6),grow:true,delay:rnd(0,0.6)})); }},
+  emojiRain:{name:'Дождь эмодзи',icon:'🌧️',sound:'whoosh',
+    params:{emoji:P.emoji('💀'),count:P.count(45),duration:P.duration(2.5)},
+    run(p,a){ const chars=p.emoji.trim().split(/\s+/).filter(Boolean); if(!chars.length) chars.push('💀');
+      for(let i=0;i<p.count;i++) fx.push(particle({kind:'emoji',ch:chars[i%chars.length],x:rnd(20,W-20),y:-60,
+        vx:rnd(-30,30),vy:rnd(250,520),g:200,life:6,size:rnd(34,70),rot:rnd(-0.5,0.5),vr:rnd(-2,2),delay:rnd(0,p.duration)})); }},
+  fireworks:{name:'Салют',icon:'🎆',sound:'boom',
+    params:{count:{label:'Залпов',type:'number',def:5}},
+    run(p){ for(let i=0;i<p.count;i++){ const x=rnd(W*0.15,W*0.85), ty=rnd(H*0.12,H*0.4), hue=rnd(0,360); let y=H+10, delay=i*0.28;
+      fx.push(entity(9,function(){ if(this.age<delay||this.boom) return; g.save(); g.globalCompositeOperation='lighter';
+          g.fillStyle=`hsl(${hue},100%,75%)`; g.beginPath(); g.arc(x,y,3,0,7); g.fill(); g.restore(); },
+        function(dt){ if(this.age<delay||this.boom) return; y-=1400*dt*Math.max(0.25,(y-ty)/H*1.6);
+          if(y<=ty+4){ this.boom=true; this.life=this.age; for(let k=0;k<90;k++){ const ang=rnd(0,6.283), sp=rnd(150,520);
+            fx.push(particle({kind:k%3?'dot':'spark',x,y,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,g:220,drag:1.4,life:rnd(1,1.8),
+              r:rnd(1.5,3.2),color:`hsl(${hue+rnd(-25,25)},100%,${rnd(55,75)}%)`,shrink:true,fade:0.8})); } } })); } }},
+  burst:{name:'Взрыв частиц',icon:'💥',sound:'whoosh',
+    params:{color:P.color('#34e1ff'),count:P.count(130)},
+    run(p,a){ for(let i=0;i<p.count;i++){ const ang=rnd(0,6.283), sp=rnd(250,950);
+        fx.push(particle({kind:i%2?'dot':'spark',x:a.x,y:a.y,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,drag:2.6,life:rnd(0.6,1.3),r:rnd(1.5,4),color:p.color,shrink:true})); }
+      fx.push(entity(0.6,function(){ const t=this.age/this.life; g.save(); g.globalAlpha=1-t; g.strokeStyle=p.color; g.lineWidth=6*(1-t)+1;
+        g.shadowColor=p.color; g.shadowBlur=20; g.beginPath(); g.arc(a.x,a.y,30+t*Math.max(W,H)*0.35,0,7); g.stroke(); g.restore(); })); }},
+  neonFrame:{name:'Неон-рамка',icon:'🟪',sound:'chime',
+    params:{color:P.color('#b44dff'),duration:P.duration(3)},
+    run(p){ fx.push(entity(p.duration,function(){ const t=this.age, d=this.life;
+        const a=Math.min(1,t/0.2,(d-t)/0.4)*(0.75+0.25*Math.sin(t*10)); g.save(); g.globalAlpha=clamp(a,0,1);
+        g.strokeStyle=p.color; g.shadowColor=p.color; g.shadowBlur=40; g.lineWidth=12; const m=14;
+        g.strokeRect(m,m,W-2*m,H-2*m); g.lineWidth=3; g.strokeStyle='#fff'; g.shadowBlur=10; g.strokeRect(m,m,W-2*m,H-2*m); g.restore(); })); }},
+  flash:{name:'Вспышка',icon:'⚡',sound:'none',
+    params:{color:P.color('#ffffff'),duration:P.duration(0.4)},
+    run(p){ fx.push(entity(p.duration,function(){ g.save(); g.globalAlpha=0.75*(1-this.age/this.life); g.fillStyle=p.color; g.fillRect(0,0,W,H); g.restore(); })); }},
+  text:{name:'Надпись',icon:'🔤',sound:'chime',
+    params:{text:{label:'Текст',type:'text',def:'GG!'},color:P.color('#ffde3b'),duration:P.duration(2.5)},
+    run(p){ const size=Math.min(W,H)*0.13;
+      fx.push(entity(p.duration,function(){ const t=this.age, d=this.life, io=0.28;
+        const k = t<io ? 1-Math.pow(1-t/io,3) : t>d-io ? 1+Math.pow((t-(d-io))/io,3) : 1;
+        const x = t<io ? -W*0.6+(W*1.1)*k : t>d-io ? W*0.5+(k-1)*W : W*0.5;
+        g.save(); g.font=`900 ${size}px Impact,"Arial Black",${EMOJI_FONT}`; g.textAlign='center'; g.textBaseline='middle';
+        g.lineJoin='round'; g.lineWidth=size*0.12; g.strokeStyle='rgba(0,0,0,.85)'; g.strokeText(p.text,x,H*0.72);
+        g.shadowColor=p.color; g.shadowBlur=30; g.fillStyle=p.color; g.fillText(p.text,x,H*0.72); g.restore(); })); }},
+  glitch:{name:'Глитч',icon:'📺',sound:'zap',
+    params:{duration:P.duration(1.2)},
+    run(p){ cam.glitchUntil=Math.max(cam.glitchUntil, now()+p.duration*1000); }},
+  shake:{name:'Тряска',icon:'🫨',sound:'boom',
+    params:{intensity:{label:'Сила, px',type:'number',def:22},duration:P.duration(0.6)},
+    run(p){ cam.shakeUntil=now()+p.duration*1000; cam.shakeDur=p.duration*1000; cam.shakeAmp=p.intensity; }},
+  zoom:{name:'Зум-удар',icon:'🔍',sound:'whoosh',
+    params:{amount:{label:'Сила (0–1)',type:'number',def:0.35},duration:P.duration(0.8)},
+    run(p,a){ cam.zoom={start:now(),dur:p.duration*1000,x:a.x,y:a.y,amount:p.amount}; }},
+  lightning:{name:'Молния',icon:'🌩️',sound:'zap',
+    params:{color:P.color('#9ad7ff'),bolts:{label:'Разрядов',type:'number',def:3}},
+    run(p,a){ for(let b=0;b<p.bolts;b++){ const pts=bolt(rnd(W*0.1,W*0.9),-10,a.x+rnd(-30,30),a.y,5);
+        fx.push(entity(0.55,function(){ if(this.age<b*0.07||Math.floor(this.age*28)%3===2) return;
+          g.save(); g.globalCompositeOperation='lighter'; g.globalAlpha=1-this.age/this.life; g.lineJoin='round';
+          for(const [w,c,bl] of [[9,p.color,40],[3,'#ffffff',8]]){ g.lineWidth=w; g.strokeStyle=c; g.shadowColor=p.color; g.shadowBlur=bl;
+            g.beginPath(); g.moveTo(pts[0][0],pts[0][1]); for(const q of pts) g.lineTo(q[0],q[1]); g.stroke(); }
+          g.restore(); })); }
+      fx.push(entity(0.25,function(){ g.save(); g.globalAlpha=0.35*(1-this.age/this.life); g.fillStyle=p.color; g.fillRect(0,0,W,H); g.restore(); })); }},
+  snow:{name:'Снег',icon:'❄️',sound:'chime',
+    params:{count:P.count(160),duration:P.duration(6)},
+    run(p){ for(let i=0;i<p.count;i++) fx.push(particle({kind:'dot',x:rnd(0,W),y:-10,vx:rnd(-20,20),vy:rnd(40,110),life:12,r:rnd(1.5,4.5),
+        color:'rgba(255,255,255,.9)',delay:rnd(0,p.duration),fade:1.5})); }},
+  trail:{name:'Шлейф за пальцем',icon:'✨',sound:'none',
+    params:{color:P.color('#ffd84a'),duration:P.duration(2.5)},
+    run(p,a,gid){ let pos={x:a.x,y:a.y};
+      fx.push(entity(p.duration,null,function(){ const t=tips.get(gid); if(t) pos=t;
+        for(let i=0;i<4;i++) fx.push(particle({kind:'dot',x:pos.x+rnd(-6,6),y:pos.y+rnd(-6,6),vx:rnd(-60,60),vy:rnd(-60,40),g:120,drag:1,
+          life:rnd(0.4,0.9),r:rnd(1.5,4),color:Math.random()<0.3?'#ffffff':p.color,shrink:true,fade:0.4})); })); }},
+
+  // ---------- действия в OBS (через obs-websocket) ----------
+  obsScene:{name:'OBS: сменить сцену',icon:'🎬',sound:'none',obs:true,
+    params:{scene:{label:'Сцена',type:'text',def:'',list:'dl-obs-scenes'},back:{label:'Вернуть через, с (0 — нет)',type:'number',def:0}},
+    run(p){ obsAction(async()=>{ if(!p.scene) throw new Error('не указана сцена');
+      const prev=p.back>0?await obsCurrentScene():null;
+      await obsReq('SetCurrentProgramScene',{sceneName:p.scene});
+      if(prev&&prev!==p.scene) setTimeout(()=>obsReq('SetCurrentProgramScene',{sceneName:prev}).catch(obsFail),p.back*1000); }); }},
+  obsSource:{name:'OBS: показать/скрыть источник',icon:'👁️',sound:'none',obs:true,
+    params:{source:{label:'Источник',type:'text',def:'',list:'dl-obs-sources'},
+      scene:{label:'В сцене (пусто — текущая)',type:'text',def:'',list:'dl-obs-scenes'},
+      mode:{label:'Действие',type:'select',options:{flash:'показать на время',toggle:'переключить',show:'показать',hide:'скрыть'},def:'flash'},
+      duration:P.duration(4)},
+    run(p){ obsAction(async()=>{ if(!p.source) throw new Error('не указан источник');
+      const sceneName=p.scene||await obsCurrentScene();
+      const {sceneItemId}=await obsReq('GetSceneItemId',{sceneName,sourceName:p.source});
+      const set=v=>obsReq('SetSceneItemEnabled',{sceneName,sceneItemId,sceneItemEnabled:v});
+      if(p.mode==='toggle'){ const {sceneItemEnabled}=await obsReq('GetSceneItemEnabled',{sceneName,sceneItemId}); await set(!sceneItemEnabled); }
+      else if(p.mode==='hide') await set(false);
+      else { await set(true); if(p.mode==='flash') setTimeout(()=>set(false).catch(obsFail),p.duration*1000); } }); }},
+  obsMute:{name:'OBS: звук вкл/выкл',icon:'🔇',sound:'none',obs:true,
+    params:{input:{label:'Источник звука',type:'text',def:'',list:'dl-obs-inputs'},
+      mode:{label:'Действие',type:'select',options:{toggle:'переключить',mute:'выключить',unmute:'включить'},def:'toggle'}},
+    run(p){ obsAction(async()=>{ if(!p.input) throw new Error('не указан источник звука');
+      if(p.mode==='toggle'){ const {inputMuted}=await obsReq('ToggleInputMute',{inputName:p.input}); if(!obsMode) toast(`OBS: ${p.input} — ${inputMuted?'звук выключен':'звук включён'}`); }
+      else await obsReq('SetInputMute',{inputName:p.input,inputMuted:p.mode==='mute'}); }); }},
+  obsFilter:{name:'OBS: фильтр вкл/выкл',icon:'🎛️',sound:'none',obs:true,
+    params:{source:{label:'Источник',type:'text',def:'',list:'dl-obs-sources'},filter:{label:'Фильтр',type:'text',def:''},
+      mode:{label:'Действие',type:'select',options:{flash:'включить на время',toggle:'переключить',on:'включить',off:'выключить'},def:'flash'},
+      duration:P.duration(3)},
+    run(p){ obsAction(async()=>{ if(!p.source||!p.filter) throw new Error('укажи источник и фильтр');
+      const set=v=>obsReq('SetSourceFilterEnabled',{sourceName:p.source,filterName:p.filter,filterEnabled:v});
+      if(p.mode==='toggle'){ const {filterEnabled}=await obsReq('GetSourceFilter',{sourceName:p.source,filterName:p.filter}); await set(!filterEnabled); }
+      else if(p.mode==='off') await set(false);
+      else { await set(true); if(p.mode==='flash') setTimeout(()=>set(false).catch(obsFail),p.duration*1000); } }); }},
+  obsReplay:{name:'OBS: сохранить повтор',icon:'⏺️',sound:'none',obs:true,
+    params:{},
+    run(){ obsAction(async()=>{ await obsReq('SaveReplayBuffer'); if(!obsMode) toast('OBS: повтор сохранён'); }); }},
+};
+
+function bolt(x1,y1,x2,y2,depth){
+  let pts=[[x1,y1],[x2,y2]];
+  for(let d=0; d<depth; d++){
+    const out=[pts[0]];
+    for(let i=1;i<pts.length;i++){ const [ax,ay]=pts[i-1],[bx,by]=pts[i]; const len=Math.hypot(bx-ax,by-ay);
+      out.push([(ax+bx)/2+rnd(-1,1)*len*0.22,(ay+by)/2+rnd(-1,1)*len*0.08],[bx,by]); }
+    pts=out;
+  }
+  return pts;
+}
+
+// ====================== Звук ======================
+let actx=null;
+function audio(){ if(!actx){ try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch{ return null; } }
+  if(actx.state==='suspended') actx.resume(); return actx; }
+function playSound(name){
+  if(!name||name==='none') return; const a=audio(); if(!a) return;
+  const t=a.currentTime, out=a.createGain(); out.gain.value=cfg.settings.volume; out.connect(a.destination);
+  const tone=(type,f0,f1,dur,vol=0.6,delay=0)=>{ const o=a.createOscillator(), gn=a.createGain(); o.type=type;
+    o.frequency.setValueAtTime(f0,t+delay); o.frequency.exponentialRampToValueAtTime(f1,t+delay+dur);
+    gn.gain.setValueAtTime(vol,t+delay); gn.gain.exponentialRampToValueAtTime(0.001,t+delay+dur);
+    o.connect(gn).connect(out); o.start(t+delay); o.stop(t+delay+dur+0.05); };
+  const noise=(dur,f0,f1,vol,type='lowpass')=>{ const len=Math.floor(a.sampleRate*dur), b=a.createBuffer(1,len,a.sampleRate), d=b.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=Math.random()*2-1; const s=a.createBufferSource(); s.buffer=b;
+    const fl=a.createBiquadFilter(); fl.type=type; fl.frequency.setValueAtTime(f0,t); fl.frequency.exponentialRampToValueAtTime(f1,t+dur);
+    const gn=a.createGain(); gn.gain.setValueAtTime(vol,t); gn.gain.exponentialRampToValueAtTime(0.001,t+dur);
+    s.connect(fl).connect(gn).connect(out); s.start(t); };
+  switch(name){
+    case 'pop': tone('sine',900,180,0.16); break;
+    case 'chime': tone('sine',880,880,0.6,0.35); tone('sine',1320,1320,0.8,0.25,0.12); break;
+    case 'boom': noise(0.9,900,40,1.1); tone('sine',110,38,0.6,0.8); break;
+    case 'whoosh': noise(0.55,300,4500,0.7,'bandpass'); break;
+    case 'zap': tone('sawtooth',1800,70,0.3,0.3); noise(0.25,7000,500,0.3,'highpass'); break;
+  }
+}
+
+// ====================== OBS WebSocket (протокол v5) ======================
+const obs={needPassword:false,ws:null,state:'off',err:'',ready:false,pending:new Map(),seq:0,scenes:[],inputs:[],retryT:null};
+function sha256Fallback(m){ // на случай, если crypto.subtle недоступен
+  const pr=[]; for(let n=2;pr.length<64;n++) if(pr.every(q=>n%q)) pr.push(n);
+  const fr=x=>((x-Math.floor(x))*2**32)>>>0, K=pr.map(q=>fr(Math.cbrt(q))), h=pr.slice(0,8).map(q=>fr(Math.sqrt(q)));
+  const l=m.length, bl=((l+9+63)>>6)<<6, b=new Uint8Array(bl); b.set(m); b[l]=0x80;
+  const dv=new DataView(b.buffer); dv.setUint32(bl-4,(l*8)>>>0); dv.setUint32(bl-8,Math.floor(l/0x20000000));
+  const w=new Uint32Array(64), r=(x,n)=>(x>>>n)|(x<<(32-n));
+  for(let o=0;o<bl;o+=64){
+    for(let i=0;i<16;i++) w[i]=dv.getUint32(o+i*4);
+    for(let i=16;i<64;i++){ const a=w[i-15],c=w[i-2]; w[i]=(w[i-16]+(r(a,7)^r(a,18)^(a>>>3))+w[i-7]+(r(c,17)^r(c,19)^(c>>>10)))>>>0; }
+    let [A,B,C,D,E,F,G,X]=h;
+    for(let i=0;i<64;i++){ const t1=(X+(r(E,6)^r(E,11)^r(E,25))+((E&F)^(~E&G))+K[i]+w[i])>>>0, t2=((r(A,2)^r(A,13)^r(A,22))+((A&B)^(A&C)^(B&C)))>>>0;
+      X=G; G=F; F=E; E=(D+t1)>>>0; D=C; C=B; B=A; A=(t1+t2)>>>0; }
+    [A,B,C,D,E,F,G,X].forEach((v,i)=>h[i]=(h[i]+v)>>>0);
+  }
+  const out=new Uint8Array(32); h.forEach((v,i)=>{ out[i*4]=v>>>24; out[i*4+1]=(v>>>16)&255; out[i*4+2]=(v>>>8)&255; out[i*4+3]=v&255; }); return out;
+}
+async function sha256b64(str){
+  const bytes=new TextEncoder().encode(str); let hash;
+  try{ hash=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)); }catch{ hash=sha256Fallback(bytes); }
+  let bin=''; for(const x of hash) bin+=String.fromCharCode(x); return btoa(bin);
+}
+function obsSet(state,err=''){ obs.state=state; obs.err=err; renderObsStatus(); }
+function obsStatusText(){
+  return {off:'выключено',connecting:'подключаюсь…',ok:`подключено · сцен: ${obs.scenes.length}`,error:obs.err||'ошибка'}[obs.state];
+}
+function renderObsStatus(){ const e=document.getElementById('obs-status'); if(!e) return;
+  e.textContent=obsStatusText(); e.className='pill '+(obs.state==='ok'?'st-ok':obs.state==='error'?'st-err':''); }
+function obsDisconnect(){ clearTimeout(obs.retryT); if(obs.ws){ const w=obs.ws; obs.ws=null; obs.ready=false; try{ w.close(); }catch{} } }
+function obsRetry(){ clearTimeout(obs.retryT); if(cfg.settings.obsWs.enabled) obs.retryT=setTimeout(obsConnect,5000); }
+function obsConnect(){
+  obsDisconnect();
+  const s=cfg.settings.obsWs; if(!s.enabled){ obsSet('off'); return; }
+  let ws; try{ ws=new WebSocket(s.url,'obswebsocket.json'); }catch(e){ obsSet('error','Неверный адрес: '+e.message); return; }
+  obs.ws=ws; obsSet('connecting');
+  ws.onmessage=async ev=>{
+    let m; try{ m=JSON.parse(ev.data); }catch{ return; }
+    if(m.op===0){ // Hello
+      const d={rpcVersion:1,eventSubscriptions:0}, a=m.d&&m.d.authentication;
+      if(a){ if(!s.password){ obs.needPassword=true; obsSet('error','OBS просит пароль — впиши его ниже'); renderSettings(); ws.close(); return; }
+        d.authentication=await sha256b64((await sha256b64(s.password+a.salt))+a.challenge); }
+      ws.send(JSON.stringify({op:1,d}));
+    }else if(m.op===2){ obs.ready=true; obsSet('ok'); obsRefreshLists(); if(isObsInput()) shotSchedule(0); }
+    else if(m.op===7){ const q=obs.pending.get(m.d.requestId); if(!q) return; obs.pending.delete(m.d.requestId); clearTimeout(q.t);
+      const st=m.d.requestStatus; st.result?q.res(m.d.responseData||{}):q.rej(new Error(st.comment||`ошибка ${st.code}`)); }
+  };
+  ws.onclose=ev=>{
+    if(obs.ws!==ws) return; obs.ws=null; obs.ready=false;
+    for(const q of obs.pending.values()){ clearTimeout(q.t); q.rej(new Error('соединение с OBS потеряно')); } obs.pending.clear();
+    if(ev.code===4009){ obs.needPassword=true; obsSet('error','Неверный пароль'); renderSettings(); }
+    else if(obs.state!=='error') obsSet('error','Нет соединения — OBS запущен и WebSocket-сервер включён?');
+    obsRetry();
+  };
+}
+function obsReq(requestType,requestData){
+  if(!obs.ready||!obs.ws) return Promise.reject(new Error('OBS не подключён (Настройки → OBS WebSocket)'));
+  const requestId='r'+(++obs.seq);
+  return new Promise((res,rej)=>{ const t=setTimeout(()=>{ obs.pending.delete(requestId); rej(new Error('OBS не ответил')); },5000);
+    obs.pending.set(requestId,{res,rej,t}); obs.ws.send(JSON.stringify({op:6,d:{requestType,requestId,requestData}})); });
+}
+async function obsCurrentScene(){ const r=await obsReq('GetCurrentProgramScene'); return r.sceneName||r.currentProgramSceneName; }
+async function obsRefreshLists(){
+  try{ const {scenes}=await obsReq('GetSceneList'); obs.scenes=(scenes||[]).map(x=>x.sceneName).reverse();
+    const {inputs}=await obsReq('GetInputList'); obs.inputs=(inputs||[]).map(x=>x.inputName); }catch(e){ console.warn(e); }
+  const fill=(id,arr)=>{ const d=document.getElementById(id); if(!d) return; d.innerHTML=''; for(const v of arr) d.append(el('option',{value:v})); };
+  fill('dl-obs-scenes',obs.scenes); fill('dl-obs-inputs',obs.inputs); fill('dl-obs-sources',[...new Set([...obs.inputs,...obs.scenes])]);
+  renderObsStatus();
+}
+function obsFail(e){ console.warn('OBS:',e); if(!obsMode||!$('#panel').classList.contains('hidden')) toast('OBS: '+e.message); }
+function obsAction(fn){ fn().catch(obsFail); }
+
+// ====================== Конфиг ======================
+function defaultRules(){
+  const r=(gesture,effect,extra={})=>({id:uid(),enabled:true,gesture,effect,params:{},sound:EFFECTS[effect].sound,hold:350,cooldown:2500,repeat:false,...extra});
+  return [
+    r('Thumb_Up','confetti'),
+    r('Thumb_Down','emojiRain'),
+    r('Victory','neonFrame'),
+    r('Open_Palm','burst'),
+    r('Closed_Fist','lightning'),
+    r('Closed_Fist','shake',{sound:'none'}),
+    r('Pointing_Up','trail',{hold:200,cooldown:2400,repeat:true}),
+    r('ILoveYou','text',{params:{text:'СПАСИБО, ЧАТ!'}}),
+    r('Two_Hand_Heart','hearts',{params:{count:60}}),
+    r('Finger_Heart','hearts',{params:{count:25}}),
+  ];
+}
+function defaultConfig(){
+  return {version:1,
+    settings:{mirror:false,showCamera:false,showSkeleton:false,showHud:true,input:'obs',obsSource:'',shotFps:10,shotWidth:640,camWidth:1280,camHeight:720,deviceId:'',
+      minScore:0.6,customPriority:true,volume:0.5,gpu:true,
+      obsWs:{enabled:true,url:'ws://127.0.0.1:4455',password:''}},
+    customGestures:[], rules:defaultRules()};
+}
+function loadConfig(){
+  const d=defaultConfig();
+  try{ const raw=localStorage.getItem(STORE_KEY); if(raw){ const c=JSON.parse(raw);
+    const out={...d,...c,settings:{...d.settings,...(c.settings||{})},customGestures:c.customGestures||[],rules:c.rules||d.rules};
+    out.settings.obsWs={...d.settings.obsWs,...(out.settings.obsWs||{})}; return out; } }catch{}
+  return d;
+}
+let cfg=loadConfig();
+let saveT=null;
+function save(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{ localStorage.setItem(STORE_KEY,JSON.stringify(cfg)); }catch(e){ console.warn('save failed',e); } },250); }
+
+function ruleParams(rule){
+  const def=EFFECTS[rule.effect]?.params||{}, out={};
+  for(const [k,s] of Object.entries(def)) out[k]=rule.params?.[k]??s.def;
+  return out;
+}
+function gestureLabel(id){
+  if(BUILTIN[id]) return `${BUILTIN[id].icon} ${BUILTIN[id].name}`;
+  const c=cfg.customGestures.find(x=>'c:'+x.id===id); return c?`⭐ ${c.name}`:'(удалённый жест)';
+}
+
+// ====================== Признаки руки для своих жестов ======================
+let aspect=16/9;
+function handFeature(lm, handed){
+  const flip = handed==='Left' ? -1 : 1;  // зеркалим левую руку, чтобы жест работал обеими
+  const w=lm[0], m=lm[9];
+  const sc=Math.hypot((m.x-w.x)*aspect, m.y-w.y)||1e-6;
+  const f=new Array(42);
+  for(let i=0;i<21;i++){ f[2*i]=flip*(lm[i].x-w.x)*aspect/sc; f[2*i+1]=(lm[i].y-w.y)/sc; }
+  return {f,sc};
+}
+function twoHandFeature(h1,h2){
+  const [a,b]=h1.lm[0].x<h2.lm[0].x?[h1,h2]:[h2,h1];
+  const sc=(a.feat.sc+b.feat.sc)/2;
+  return [...a.feat.f, ...b.feat.f, (b.lm[0].x-a.lm[0].x)*aspect/sc, (b.lm[0].y-a.lm[0].y)/sc];
+}
+function featDist(a,b){
+  if(!a||!b||a.length!==b.length) return Infinity;
+  let s=0; const n=a.length/2;
+  for(let i=0;i<a.length;i+=2) s+=Math.hypot(a[i]-b[i],a[i+1]-b[i+1]);
+  return s/n;
+}
+function nearest(gst, feat){ let best=Infinity; for(const s of gst.samples){ const d=featDist(s,feat); if(d<best) best=d; } return best; }
+
+// ====================== Камера и модель ======================
+const video=$('#video');
+let stream=null, recognizer=null, statusMsg='Загружаю модель…';
+const isObsInput=()=>cfg.settings.input==='obs';
+// Кадры из OBS: GetSourceScreenshot через obs-websocket — браузеру не нужен доступ к камере
+const shot={img:null,pending:null,lastT:0,timer:null};
+function shotSchedule(delay){ clearTimeout(shot.timer); shot.timer=setTimeout(shotTick,delay); }
+async function shotTick(){
+  if(!isObsInput()) return;
+  const s=cfg.settings;
+  if(!s.obsWs.enabled){ statusMsg='Источник кадров — OBS, но OBS WebSocket выключен.\nВключи его в «Настройки → OBS WebSocket».'; shotSchedule(1000); return; }
+  if(!s.obsSource){ statusMsg='Укажи имя источника камеры в OBS\n(«Настройки → Источник кадров»).'; shotSchedule(1000); return; }
+  if(!obs.ready){ shotSchedule(1000); return; }
+  try{
+    const r=await obsReq('GetSourceScreenshot',{sourceName:s.obsSource,imageFormat:'jpg',imageWidth:s.shotWidth,imageCompressionQuality:70});
+    const img=new Image(); img.src=r.imageData; await img.decode();
+    shot.img=img; shot.pending=img; shot.lastT=now();
+    if(/^(Не получаю кадры|Укажи имя|Источник кадров)/.test(statusMsg)) statusMsg='';
+    shotSchedule(1000/clamp(s.shotFps||10,1,30));
+  }catch(e){
+    if(!isObsInput()) return;
+    statusMsg=`Не получаю кадры из OBS: ${e.message}\nПроверь имя источника «${s.obsSource}».`; shotSchedule(2000);
+  }
+}
+function frameSource(){
+  if(isObsInput()) return shot.img?{el:shot.img,w:shot.img.naturalWidth,h:shot.img.naturalHeight}:null;
+  return video.readyState>=2&&video.videoWidth?{el:video,w:video.videoWidth,h:video.videoHeight}:null;
+}
+async function startCamera(){
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  const s=cfg.settings;
+  if(/^(Нет доступа|Не получаю кадры|Укажи имя|Источник кадров)/.test(statusMsg)) statusMsg='';
+  if(isObsInput()){ video.srcObject=null; shot.img=null; shot.pending=null; shotSchedule(0); return; }
+  clearTimeout(shot.timer);
+  const c={audio:false,video:{width:{ideal:s.camWidth},height:{ideal:s.camHeight},frameRate:{ideal:30}}};
+  if(s.deviceId) c.video.deviceId={exact:s.deviceId};
+  try{
+    stream=await navigator.mediaDevices.getUserMedia(c);
+    video.srcObject=stream; await video.play();
+    if(statusMsg.startsWith('Нет доступа')) statusMsg='';
+    listCameras();
+  }catch(e){
+    statusMsg=`Нет доступа к камере (${e.name}).\nВ OBS: запусти OBS с флагом --enable-media-stream.\nВ браузере: разреши камеру и закрой другие программы, которые её используют.`;
+    console.error(e);
+  }
+}
+async function initModel(){
+  try{
+    const {FilesetResolver, GestureRecognizer} = await import(`${CDN}/vision_bundle.mjs`);
+    const files=await FilesetResolver.forVisionTasks(`${CDN}/wasm`);
+    const opts=d=>({baseOptions:{modelAssetPath:MODEL,delegate:d},runningMode:'VIDEO',numHands:2,
+      minHandDetectionConfidence:0.5,minHandPresenceConfidence:0.5,minTrackingConfidence:0.5});
+    try{ recognizer=await GestureRecognizer.createFromOptions(files,opts(cfg.settings.gpu?'GPU':'CPU')); }
+    catch(e){ console.warn('GPU не завёлся, пробую CPU',e); recognizer=await GestureRecognizer.createFromOptions(files,opts('CPU')); }
+    if(statusMsg==='Загружаю модель…') statusMsg='';
+  }catch(e){ statusMsg='Не удалось загрузить модель MediaPipe (нужен интернет).\n'+e.message; console.error(e); }
+}
+
+// ====================== Распознавание ======================
+let detCount=0; let hands=[], lastVideoTime=-1, layout={dx:0,dy:0,dw:1,dh:1};
+const liveDist=new Map();  // id своего жеста -> текущее расстояние
+let rec=null;              // идёт запись своего жеста
+function toScreen(p){ const x=cfg.settings.mirror?1-p.x:p.x; return {x:layout.dx+x*layout.dw, y:layout.dy+p.y*layout.dh}; }
+
+let lastDetTs=0;
+function updateLayout(vw,vh){ if(vw&&vh){ const s=Math.max(W/vw,H/vh); layout={dw:vw*s,dh:vh*s,dx:(W-vw*s)/2,dy:(H-vh*s)/2}; } }
+function detect(t){
+  if(!recognizer) return false;
+  let src,w,h;
+  if(isObsInput()){ if(!shot.pending) return false; src=shot.pending; shot.pending=null; w=src.naturalWidth; h=src.naturalHeight; }
+  else { if(video.readyState<2||video.currentTime===lastVideoTime) return false; lastVideoTime=video.currentTime; src=video; w=video.videoWidth; h=video.videoHeight; }
+  aspect=(w||16)/(h||9); updateLayout(w,h);
+  const ts=Math.max(t,lastDetTs+1); lastDetTs=ts;
+  let r; try{ r=recognizer.recognizeForVideo(src,ts); }catch(e){ console.warn(e); return false; }
+  hands=(r.landmarks||[]).map((lm,i)=>{
+    const handed=r.handedness?.[i]?.[0]?.categoryName||'Right';
+    const gst=r.gestures?.[i]?.[0];
+    const h={lm,handed,builtin:gst?{name:gst.categoryName,score:gst.score}:null};
+    h.feat=handFeature(lm,handed);
+    h.center=toScreen({x:(lm[0].x+lm[9].x)/2,y:(lm[0].y+lm[9].y)/2});
+    h.tip=toScreen(lm[8]);
+    return h;
+  });
+  if(rec) recordStep(t);
+  detCount++;
+  return true;
+}
+
+function isFingerHeart(lm){
+  const d=(a,b)=>Math.hypot((lm[a].x-lm[b].x)*aspect,lm[a].y-lm[b].y), palm=d(0,9);
+  if(palm<0.015) return false;
+  const folded=(tip,joint)=>d(0,tip)<d(0,joint)*1.12;
+  return d(4,8)<palm*0.38 && d(0,4)>palm*0.65 && d(0,8)>palm*0.85 && folded(12,10) && folded(16,14) && folded(20,18);
+}
+function computeActive(){
+  const act=new Map(); const s=cfg.settings;
+  const put=(id,center,tip,score)=>{ const cur=act.get(id); if(!cur||score>cur.score) act.set(id,{anchor:center,tip,score}); };
+  liveDist.clear();
+  for(const h of hands){
+    let customHit=false;
+    for(const cg of cfg.customGestures){ if(cg.hands!==1||!cg.samples.length) continue;
+      const d=nearest(cg,h.feat.f); liveDist.set(cg.id,Math.min(d,liveDist.get(cg.id)??Infinity));
+      if(d<cg.threshold){ put('c:'+cg.id,h.center,h.tip,1-d); customHit=true; } }
+    if(!(s.customPriority&&customHit) && isFingerHeart(h.lm)){
+      const a=toScreen(h.lm[4]), b=toScreen(h.lm[8]); put('Finger_Heart',{x:(a.x+b.x)/2,y:(a.y+b.y)/2},h.tip,1); continue; }
+    if(h.builtin && h.builtin.name!=='None' && h.builtin.score>=s.minScore && !(s.customPriority&&customHit))
+      put(h.builtin.name,h.center,h.tip,h.builtin.score);
+  }
+  if(hands.length>=2){
+    const [a,b]=hands; const mid={x:(a.center.x+b.center.x)/2,y:(a.center.y+b.center.y)/2};
+    const tipMid={x:(a.tip.x+b.tip.x)/2,y:(a.tip.y+b.tip.y)/2};
+    // встроенное правило: сердце двумя руками
+    const sc=(a.feat.sc+b.feat.sc)/2, dist=(p,q)=>Math.hypot((p.x-q.x)*aspect,p.y-q.y);
+    if(dist(a.lm[8],b.lm[8])<0.75*sc && dist(a.lm[4],b.lm[4])<0.75*sc && a.lm[8].y<a.lm[4].y && b.lm[8].y<b.lm[4].y &&
+       dist(a.lm[8],a.lm[4])>0.5*sc) put('Two_Hand_Heart',{x:(toScreen(a.lm[8]).x+toScreen(b.lm[4]).x)/2,y:toScreen(a.lm[6]).y},tipMid,1);
+    const f2=twoHandFeature(a,b);
+    for(const cg of cfg.customGestures){ if(cg.hands!==2||!cg.samples.length) continue;
+      const d=nearest(cg,f2); liveDist.set(cg.id,d); if(d<cg.threshold) put('c:'+cg.id,mid,tipMid,1-d); }
+  }
+  return act;
+}
+
+// ====================== Правила: удержание и кулдаун ======================
+const ruleState=new Map();
+let activeNow=new Map();
+function fireRule(rule, anchor, gid){
+  const e=EFFECTS[rule.effect]; if(!e) return;
+  try{ e.run(ruleParams(rule), anchor||{x:W/2,y:H/2}, gid||rule.gesture); }catch(err){ console.error(err); }
+  playSound(rule.sound);
+}
+function processRules(t){
+  activeNow=computeActive();
+  for(const [id,a] of activeNow) tips.set(id,a.tip);
+  for(const rule of cfg.rules){
+    if(!rule.enabled) continue;
+    let st=ruleState.get(rule.id); if(!st){ st={since:null,lost:null,fired:false,last:-1e9}; ruleState.set(rule.id,st); }
+    const a=activeNow.get(rule.gesture);
+    if(a){
+      st.lost=null; if(st.since==null) st.since=t;
+      if(t-st.since>=rule.hold && t-st.last>=rule.cooldown && (rule.repeat||!st.fired)){ fireRule(rule,a.anchor,rule.gesture); st.last=t; st.fired=true; }
+    }else if(st.since!=null){
+      if(st.lost==null) st.lost=t;
+      if(t-st.lost>220){ st.since=null; st.lost=null; st.fired=false; }  // небольшая «терпимость» к морганию детекции
+    }
+  }
+}
+
+// ====================== Запись своих жестов ======================
+function startRecording(target){ // target: {gestureId?|name,hands}
+  if(!recognizer||!(isObsInput()?shot.img:stream)){ toast('Нет кадров или модель ещё не готова'); return; }
+  const t=now(); rec={...target,start:t+3000,end:t+5500,samples:[]};
+}
+function recordStep(t){
+  if(t<rec.start) return;
+  // на медленных машинах кадров мало — продлеваем запись, пока не наберём хотя бы 15 (максимум +4 с)
+  if(t>rec.end && (rec.samples.length>=15 || t>rec.end+4000)){ finishRecording(); return; }
+  if(rec.hands===1 && hands.length>=1) rec.samples.push(hands[0].feat.f.slice());
+  else if(rec.hands===2 && hands.length>=2){ rec.samples.push(twoHandFeature(hands[0],hands[1])); }
+}
+function finishRecording(){
+  const r=rec; rec=null;
+  let s=r.samples; if(s.length<3){ toast(r.hands===2?'Не увидел две руки — попробуй ещё раз':'Не увидел руку — попробуй ещё раз'); return; }
+  if(s.length>40){ const step=s.length/40; s=Array.from({length:40},(_,i)=>s[Math.floor(i*step)]); }
+  s=s.map(v=>v.map(x=>Math.round(x*1000)/1000));
+  let cg;
+  if(r.gestureId){ cg=cfg.customGestures.find(x=>x.id===r.gestureId); if(cg) cg.samples.push(...s); if(cg&&cg.samples.length>160) cg.samples=cg.samples.slice(-160); }
+  else { cg={id:uid(),name:r.name||'Мой жест',hands:r.hands,threshold:r.hands===2?0.35:0.25,samples:s}; cfg.customGestures.push(cg); }
+  save(); renderCustom(); renderRules(); toast(`«${cg?.name}»: записано кадров — ${s.length}`);
+}
+
+// ====================== Рендер ======================
+let lastT=now(), fps=0, hudT=0, detRate=0, detT=now();
+function drawCamera(t){
+  const f=frameSource(); if(f) updateLayout(f.w,f.h);
+  if(!cfg.settings.showCamera||!f) return;
+  g.save();
+  if(cam.zoom){ const z=cam.zoom, k=(t-z.start)/z.dur;
+    if(k>=1) cam.zoom=null; else { const s=1+z.amount*Math.sin(Math.PI*k); g.translate(z.x,z.y); g.scale(s,s); g.translate(-z.x,-z.y); } }
+  if(cfg.settings.mirror){ g.translate(W,0); g.scale(-1,1); g.drawImage(f.el,W-layout.dx-layout.dw,layout.dy,layout.dw,layout.dh); }
+  else g.drawImage(f.el,layout.dx,layout.dy,layout.dw,layout.dh);
+  g.restore();
+}
+function drawGlitch(t){
+  if(t>cam.glitchUntil) return;
+  for(let i=0;i<9;i++){ const y=rnd(0,H), h=rnd(4,50), off=rnd(-90,90); g.drawImage(cv,0,y,W,h,off,y,W,h); }
+  g.save(); g.globalCompositeOperation='screen';
+  g.fillStyle='rgba(255,0,80,.18)'; g.fillRect(rnd(-20,20),rnd(0,H),W,rnd(10,80));
+  g.fillStyle='rgba(0,255,240,.18)'; g.fillRect(rnd(-20,20),rnd(0,H),W,rnd(10,80));
+  g.restore();
+}
+const BONES=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function drawSkeleton(){
+  g.save(); g.lineWidth=3; g.strokeStyle='rgba(52,225,255,.8)'; g.fillStyle='#fff';
+  for(const h of hands){ const pts=h.lm.map(toScreen);
+    g.beginPath(); for(const [a,b] of BONES){ g.moveTo(pts[a].x,pts[a].y); g.lineTo(pts[b].x,pts[b].y); } g.stroke();
+    for(const p of pts){ g.beginPath(); g.arc(p.x,p.y,3.5,0,7); g.fill(); } }
+  g.restore();
+}
+function drawOverlayText(text, sub){
+  g.save(); g.fillStyle='rgba(0,0,0,.55)'; g.fillRect(0,H/2-90,W,180);
+  g.fillStyle='#fff'; g.textAlign='center'; g.textBaseline='middle'; g.font=`700 ${Math.min(64,W/12)}px system-ui,sans-serif`;
+  g.fillText(text,W/2,H/2-20);
+  if(sub){ g.font='18px system-ui,sans-serif'; g.fillStyle='#cfd2e0'; sub.split('\n').forEach((l,i)=>g.fillText(l,W/2,H/2+30+i*24)); }
+  g.restore();
+}
+function loop(){
+  const t=now(), dt=Math.min(0.05,(t-lastT)/1000); lastT=t;
+  if(dt>0) fps=fps*0.9+(1/dt)*0.1;
+  if(detect(t)) processRules(t);
+  else if(isObsInput()&&hands.length&&t-shot.lastT>800){ hands=[]; processRules(t); }  // кадры перестали приходить
+  g.clearRect(0,0,W,H);
+  g.save();
+  if(t<cam.shakeUntil){ const k=(cam.shakeUntil-t)/cam.shakeDur; g.translate(rnd(-1,1)*cam.shakeAmp*k,rnd(-1,1)*cam.shakeAmp*k); }
+  drawCamera(t);
+  g.restore();
+  drawGlitch(t);
+  if(cfg.settings.showSkeleton||rec) drawSkeleton();
+  for(let i=fx.length-1;i>=0;i--){ if(!fx[i].update(dt)) fx.splice(i,1); }
+  for(const e of fx) e.draw&&e.draw();
+  if(fx.length>4000) fx.splice(0,fx.length-4000);
+  if(rec){ if(t<rec.start) drawOverlayText(String(Math.ceil((rec.start-t)/1000)),`Приготовься: ${rec.hands===2?'две руки':'одна рука'} в кадре`);
+    else drawOverlayText('Запись…',`Держи жест и чуть двигай рукой · кадров: ${rec.samples.length}`); }
+  if(statusMsg&&(!obsMode||!$('#panel').classList.contains('hidden'))) drawOverlayText('Gesture FX',statusMsg);
+  if(t-detT>1000){ detRate=detCount*1000/(t-detT); detCount=0; detT=t; }
+  if(t-hudT>150){ hudT=t; updateHud(); }
+  requestAnimationFrame(loop);
+}
+
+// ====================== HUD ======================
+const obsMode=new URLSearchParams(location.search).has('obs');
+function updateHud(){
+  const hud=$('#hud'); const show=cfg.settings.showHud&&!(obsMode&&$('#panel').classList.contains('hidden'));
+  hud.classList.toggle('hidden',!show);
+  if(show){ const names=[...activeNow.keys()].map(gestureLabel).join(', ')||'—';
+    hud.textContent=`FPS ${fps.toFixed(0)} · детект ${detRate.toFixed(0)}/с · рук: ${hands.length}${cfg.settings.obsWs.enabled?(obs.ready?' · OBS ✓':' · OBS ✗'):''}\nЖесты: ${names}`; }
+  if(curTab==='custom') for(const cg of cfg.customGestures){ const e=document.getElementById('ld-'+cg.id); if(!e) continue;
+    const d=liveDist.get(cg.id); e.textContent=d==null||!isFinite(d)?'сейчас: —':`сейчас: ${d.toFixed(2)}`; e.classList.toggle('hit',d<cg.threshold); }
+}
+
+// ====================== UI ======================
+let curTab='rules';
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  curTab=b.dataset.tab; document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('.body').forEach(x=>x.classList.toggle('hidden',x.id!=='tab-'+curTab)); });
+function togglePanel(force){ const p=$('#panel'); const hide=force!=null?!force:!p.classList.contains('hidden'); p.classList.toggle('hidden',hide);
+  $('#gear').classList.toggle('hidden',!hide||obsMode); audio(); }
+$('#gear').onclick=()=>togglePanel(true); $('#close').onclick=()=>togglePanel(false);
+addEventListener('keydown',e=>{ if(e.target.matches('input,textarea,select')) return; if(e.key==='h'||e.key==='H'||e.key==='р'||e.key==='Р') togglePanel(); });
+addEventListener('pointerdown',()=>audio(),{once:true});
+
+function gestureSelect(value,onchange){
+  const s=el('select',{class:'grow',onchange:e=>onchange(e.target.value)});
+  const og1=el('optgroup',{label:'Встроенные'}); for(const [id,b] of Object.entries(BUILTIN)) og1.append(el('option',{value:id,selected:id===value},`${b.icon} ${b.name}`));
+  s.append(og1);
+  if(cfg.customGestures.length){ const og2=el('optgroup',{label:'Мои жесты'});
+    for(const c of cfg.customGestures) og2.append(el('option',{value:'c:'+c.id,selected:'c:'+c.id===value},`⭐ ${c.name}`)); s.append(og2); }
+  if(!BUILTIN[value]&&!cfg.customGestures.some(c=>'c:'+c.id===value)) s.prepend(el('option',{value,selected:true},'(удалённый жест)'));
+  return s;
+}
+function paramInput(spec,val,onchange){
+  if(spec.type==='select'){ const s=el('select',{onchange:e=>onchange(e.target.value)});
+    for(const [k,l] of Object.entries(spec.options)) s.append(el('option',{value:k,selected:k===val},l)); return s; }
+  if(spec.type==='number') return el('input',{type:'number',step:'any',value:val,onchange:e=>onchange(parseFloat(e.target.value)||0)});
+  if(spec.type==='color') return el('input',{type:'color',value:val,oninput:e=>onchange(e.target.value)});
+  return el('input',{type:'text',class:'grow',value:val,list:spec.list||null,placeholder:spec.list?'начни вводить или выбери':null,oninput:e=>onchange(e.target.value)});
+}
+function renderRules(){
+  const root=$('#tab-rules'); root.innerHTML='';
+  root.append(el('p',{class:'hint'},'Жест → эффект. «Удержание» — сколько держать жест до срабатывания, «Кулдаун» — пауза до следующего раза. На один жест можно повесить несколько правил.'));
+  cfg.rules.forEach((rule,idx)=>{
+    const e=EFFECTS[rule.effect]; const p=ruleParams(rule);
+    const card=el('div',{class:'card'+(rule.enabled?'':' off')});
+    card.append(el('div',{class:'row'},
+      el('input',{type:'checkbox',checked:rule.enabled,title:'Включено',onchange:ev=>{rule.enabled=ev.target.checked;card.classList.toggle('off',!rule.enabled);save();}}),
+      gestureSelect(rule.gesture,v=>{rule.gesture=v;save();}),
+      el('button',{class:'b i',title:'Проверить',onclick:()=>fireRule(rule)},'▶'),
+      el('button',{class:'b i d',title:'Удалить',onclick:()=>{cfg.rules.splice(idx,1);save();renderRules();}},'✕')));
+    const effSel=el('select',{class:'grow',onchange:ev=>{rule.effect=ev.target.value;rule.params={};rule.sound=EFFECTS[rule.effect].sound;save();renderRules();}});
+    for(const [id,x] of Object.entries(EFFECTS)) effSel.append(el('option',{value:id,selected:id===rule.effect},`${x.icon} ${x.name}`));
+    card.append(el('div',{class:'row'},el('label',{},'Эффект'),effSel));
+    for(const [k,spec] of Object.entries(e?.params||{}))
+      card.append(el('div',{class:'row'},el('label',{},spec.label),paramInput(spec,p[k],v=>{rule.params={...rule.params,[k]:v};save();})));
+    const snd=el('select',{onchange:ev=>{rule.sound=ev.target.value;save();}});
+    for(const [k,l] of Object.entries(SOUNDS)) snd.append(el('option',{value:k,selected:k===rule.sound},l));
+    card.append(el('div',{class:'row'},el('label',{},'Звук'),snd));
+    card.append(el('div',{class:'row'},
+      el('label',{},'Удержание, мс'),el('input',{type:'number',value:rule.hold,onchange:ev=>{rule.hold=+ev.target.value||0;save();}}),
+      el('span',{class:'hint'},'Кулдаун'),el('input',{type:'number',value:rule.cooldown,onchange:ev=>{rule.cooldown=+ev.target.value||0;save();}})));
+    card.append(el('div',{class:'row'},el('label',{},''),
+      el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:rule.repeat,onchange:ev=>{rule.repeat=ev.target.checked;save();}}),' повторять, пока держу жест')));
+    root.append(card);
+  });
+  root.append(el('div',{class:'row'},
+    el('button',{class:'b p',onclick:()=>{cfg.rules.push({id:uid(),enabled:true,gesture:'Thumb_Up',effect:'confetti',params:{},sound:'pop',hold:350,cooldown:2500,repeat:false});save();renderRules();}},'+ Добавить правило')));
+}
+function renderCustom(){
+  const root=$('#tab-custom'); root.innerHTML='';
+  root.append(el('h3',{},'Записать новый жест'));
+  const name=el('input',{type:'text',class:'grow',placeholder:'Название, например «Рога 🤘»'});
+  const hs=el('select',{},el('option',{value:'1'},'одна рука'),el('option',{value:'2'},'две руки'));
+  root.append(el('div',{class:'row'},name),el('div',{class:'row'},hs,
+    el('button',{class:'b p',onclick:()=>startRecording({name:name.value.trim()||'Мой жест',hands:+hs.value})},'● Записать')));
+  root.append(el('p',{class:'hint'},'После нажатия будет 3 секунды на подготовку, затем 2,5 секунды записи. Держи жест и слегка поворачивай руку — так распознавание станет устойчивее. Лучше записать 2–3 раза в разных положениях («+ кадры»).'));
+  root.append(el('h3',{},'Мои жесты'));
+  if(!cfg.customGestures.length) root.append(el('p',{class:'hint'},'Пока пусто.'));
+  cfg.customGestures.forEach((cg,idx)=>{
+    const thrVal=el('span',{class:'pill'},cg.threshold.toFixed(2));
+    root.append(el('div',{class:'card'},
+      el('div',{class:'row'},el('input',{type:'text',class:'grow',value:cg.name,onchange:e=>{cg.name=e.target.value||'Мой жест';save();renderRules();}}),
+        el('span',{class:'pill'},cg.hands===2?'2 руки':'1 рука'),el('span',{class:'pill'},`${cg.samples.length} кадров`)),
+      el('div',{class:'row'},el('label',{},'Порог'),
+        el('input',{type:'range',min:'0.05',max:'0.8',step:'0.01',value:cg.threshold,oninput:e=>{cg.threshold=+e.target.value;thrVal.textContent=cg.threshold.toFixed(2);save();}}),
+        thrVal,el('span',{class:'live',id:'ld-'+cg.id},'сейчас: —')),
+      el('div',{class:'row'},
+        el('button',{class:'b',onclick:()=>startRecording({gestureId:cg.id,hands:cg.hands})},'+ кадры'),
+        el('button',{class:'b',onclick:()=>{cfg.rules.push({id:uid(),enabled:true,gesture:'c:'+cg.id,effect:'burst',params:{},sound:'whoosh',hold:350,cooldown:2500,repeat:false});save();renderRules();toast('Правило добавлено — настрой его во вкладке «Правила»');}},'→ в правило'),
+        el('button',{class:'b d',onclick:()=>{ if(!confirm(`Удалить жест «${cg.name}»?`)) return; cfg.customGestures.splice(idx,1);
+          cfg.rules=cfg.rules.filter(r=>r.gesture!=='c:'+cg.id); save(); renderCustom(); renderRules(); }},'Удалить'))));
+  });
+  root.append(el('p',{class:'hint'},'«Сейчас» — насколько текущая поза руки похожа на жест (меньше — похожее). Жест срабатывает, когда значение ниже порога и подсвечено зелёным. Ложные срабатывания — уменьши порог; не срабатывает — увеличь или добавь кадры.'));
+}
+function renderLibrary(){
+  const root=$('#tab-library'); root.innerHTML='';
+  root.append(el('h3',{},'Эффекты'));
+  const grid=el('div',{class:'fxgrid'});
+  for(const [id,e] of Object.entries(EFFECTS)){
+    const tmp={effect:id,params:{},sound:e.sound};
+    grid.append(el('div',{class:'card'},el('b',{},`${e.icon} ${e.name}`),
+      el('div',{class:'row'},el('button',{class:'b i',onclick:()=>fireRule(tmp)},'▶ показать'),
+        el('button',{class:'b i',onclick:()=>{cfg.rules.push({id:uid(),enabled:true,gesture:'Open_Palm',effect:id,params:{},sound:e.sound,hold:350,cooldown:2500,repeat:false});save();renderRules();toast('Добавлено в «Правила» — выбери жест');}},'+ правило'))));
+  }
+  root.append(grid);
+  root.append(el('h3',{},'Встроенные жесты'));
+  root.append(el('p',{class:'hint'},Object.values(BUILTIN).map(b=>`${b.icon} ${b.name}`).join(' · ')));
+  root.append(el('h3',{},'Дефолтный набор'));
+  root.append(el('p',{class:'hint'},'👍 конфетти · 👎 дождь 💀 · ✌️ неон-рамка · ✋ взрыв · ✊ молния + тряска · ☝️ шлейф · 🤟 «СПАСИБО, ЧАТ!» · 🫶 и 🫰 сердечки'));
+  root.append(el('div',{class:'row'},
+    el('button',{class:'b',onclick:()=>{cfg.rules.push(...defaultRules());save();renderRules();toast('Дефолтный набор добавлен');}},'+ Добавить к моим'),
+    el('button',{class:'b d',onclick:()=>{ if(!confirm('Заменить все правила дефолтным набором?')) return; cfg.rules=defaultRules();save();renderRules();toast('Правила сброшены');}},'Сбросить правила')));
+}
+async function listCameras(){
+  const s=$('#camsel'); if(!s) return;
+  try{ const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+    s.innerHTML=''; s.append(el('option',{value:'',selected:!cfg.settings.deviceId},'по умолчанию'));
+    devs.forEach((d,i)=>s.append(el('option',{value:d.deviceId,selected:d.deviceId===cfg.settings.deviceId},d.label||`Камера ${i+1}`))); }catch{}
+}
+function renderSettings(){
+  const root=$('#tab-settings'); root.innerHTML=''; const s=cfg.settings;
+  const chk=(key,label,after)=>el('div',{class:'row'},el('label',{style:'min-width:0;color:var(--text)'},
+    el('input',{type:'checkbox',checked:s[key],onchange:e=>{s[key]=e.target.checked;save();after&&after();}}),' '+label));
+  root.append(el('h3',{},'Источник кадров'));
+  const inp=el('select',{class:'grow',onchange:e=>{ s.input=e.target.value;
+      if(s.input==='obs'){ s.showCamera=false; s.mirror=false; if(!s.obsWs.enabled){ s.obsWs.enabled=true; obsConnect(); } }
+      else { s.showCamera=true; s.mirror=true; }
+      save(); startCamera(); renderSettings(); }},
+    el('option',{value:'obs',selected:s.input==='obs'},'Источник OBS (через WebSocket)'),
+    el('option',{value:'camera',selected:s.input!=='obs'},'Камера (доступ из браузера)'));
+  root.append(el('div',{class:'row'},el('label',{},'Откуда'),inp));
+  if(s.input==='obs'){
+    root.append(el('div',{class:'row'},el('label',{},'Источник в OBS'),
+      el('input',{type:'text',class:'grow',value:s.obsSource,list:'dl-obs-sources',placeholder:'имя источника камеры, например «cam»',
+        onchange:e=>{s.obsSource=e.target.value.trim();save();shotSchedule(0);}})));
+    const sw=el('select',{onchange:e=>{s.shotWidth=+e.target.value;save();}});
+    for(const v of [480,640,960]) sw.append(el('option',{value:v,selected:v===s.shotWidth},v+' px'));
+    root.append(el('div',{class:'row'},el('label',{},'Кадров/с'),
+      el('input',{type:'number',min:'1',max:'30',value:s.shotFps,onchange:e=>{s.shotFps=clamp(+e.target.value||10,1,30);save();}}),
+      el('span',{class:'hint'},'Ширина'),sw));
+    root.append(el('div',{class:'hint',html:`Камеру оставь обычным источником в OBS, а этот браузерный источник положи поверх неё <b>с тем же размером и положением</b> — тогда эффекты попадут точно в руки. Доступ к камере и флаг <code>--enable-media-stream</code> не нужны. 10 кадров/с хватает; больше — выше нагрузка на OBS.`}));
+  }else{
+    const camsel=el('select',{id:'camsel',class:'grow',onchange:e=>{s.deviceId=e.target.value;save();startCamera();}});
+    root.append(el('div',{class:'row'},el('label',{},'Устройство'),camsel));
+    const res=el('select',{onchange:e=>{const [w,h]=e.target.value.split('x').map(Number);s.camWidth=w;s.camHeight=h;save();startCamera();}});
+    for(const r of ['640x480','1280x720','1920x1080']) res.append(el('option',{value:r,selected:r===`${s.camWidth}x${s.camHeight}`},r));
+    root.append(el('div',{class:'row'},el('label',{},'Разрешение'),res));
+  }
+  root.append(chk('mirror','Зеркалить изображение'),chk('showCamera','Показывать картинку (выключи — останутся только эффекты на прозрачном фоне)'),
+    chk('showSkeleton','Показывать скелет руки'),chk('showHud','Показывать FPS и жесты в углу'));
+  root.append(el('h3',{},'Распознавание'));
+  const ms=el('span',{class:'pill'},s.minScore.toFixed(2));
+  root.append(el('div',{class:'row'},el('label',{},'Уверенность'),
+    el('input',{type:'range',min:'0.3',max:'0.95',step:'0.01',value:s.minScore,oninput:e=>{s.minScore=+e.target.value;ms.textContent=s.minScore.toFixed(2);save();}}),ms));
+  root.append(chk('customPriority','Свои жесты важнее встроенных (на той же руке)'));
+  root.append(chk('gpu','Использовать GPU (нужна перезагрузка страницы)'));
+  root.append(el('h3',{},'Звук'));
+  const vv=el('span',{class:'pill'},Math.round(s.volume*100)+'%');
+  root.append(el('div',{class:'row'},el('label',{},'Громкость'),
+    el('input',{type:'range',min:'0',max:'1',step:'0.05',value:s.volume,oninput:e=>{s.volume=+e.target.value;vv.textContent=Math.round(s.volume*100)+'%';save();}}),vv));
+  root.append(el('h3',{},'OBS WebSocket'));
+  const ow=s.obsWs;
+  root.append(el('div',{class:'row'},el('label',{style:'min-width:0;color:var(--text)'},
+    el('input',{type:'checkbox',checked:ow.enabled,onchange:e=>{ow.enabled=e.target.checked;save();obsConnect();}}),' Подключаться к OBS'),
+    el('span',{id:'obs-status',class:'pill'},obsStatusText())));
+  root.append(el('div',{class:'row'},el('label',{},'Адрес'),
+    el('input',{type:'text',class:'grow',value:ow.url,onchange:e=>{ow.url=e.target.value.trim()||'ws://127.0.0.1:4455';save();if(ow.enabled)obsConnect();}})));
+  if(ow.password||obs.needPassword) root.append(el('div',{class:'row'},el('label',{},'Пароль'),
+    el('input',{type:'password',class:'grow',value:ow.password,autocomplete:'off',onchange:e=>{ow.password=e.target.value;save();if(ow.enabled)obsConnect();}})));
+  root.append(el('div',{class:'row'},el('label',{},''),
+    el('button',{class:'b',onclick:()=>{ if(!ow.enabled){ow.enabled=true;save();renderSettings();} obsConnect(); }},'Подключить')));
+  root.append(el('div',{class:'hint',html:`В OBS: «Сервис» → «Настройки сервера WebSocket» → «Включить сервер WebSocket». Порт по умолчанию 4455. Если в OBS включена аутентификация, здесь появится поле пароля (сам пароль — в «Показать сведения о подключении»).<br>
+    После подключения в «Правилах» появятся подсказки со списком сцен и источников для эффектов <b>OBS: …</b> (сменить сцену, показать источник, звук, фильтр, повтор).<br>
+    Пароль хранится только в этом браузере/OBS и не попадает в экспорт.`}));
+  root.append(el('h3',{},'Экспорт / импорт'));
+  const ta=el('textarea',{placeholder:'Здесь появится JSON конфига, или вставь свой и нажми «Импорт»'});
+  root.append(ta,el('div',{class:'row'},
+    el('button',{class:'b',onclick:()=>{ta.value=JSON.stringify(exportCfg());ta.select();try{navigator.clipboard.writeText(ta.value).then(()=>toast('Скопировано'),()=>{});}catch{}}},'Экспорт'),
+    el('button',{class:'b',onclick:()=>{const a=el('a',{href:URL.createObjectURL(new Blob([JSON.stringify(exportCfg(),null,1)],{type:'application/json'})),download:'gesture-fx-config.json'});a.click();}},'Скачать файл'),
+    el('button',{class:'b p',onclick:()=>importConfig(ta.value)},'Импорт'),
+    el('input',{type:'file',accept:'.json,application/json',style:'max-width:100%',onchange:async e=>{const f=e.target.files[0]; if(f) importConfig(await f.text());}})));
+  root.append(el('h3',{},'OBS'));
+  root.append(el('div',{class:'hint',html:`1. Включи OBS WebSocket (раздел выше) и укажи источник камеры в «Источник кадров». Флаг <code>--enable-media-stream</code> нужен только в режиме «Камера (доступ из браузера)».<br>
+    2. Источник «Браузер» → «Локальный файл» → этот html. Размер 1920×1080. Добавь в конец пути <code>?obs</code>, чтобы скрыть интерфейс (в OBS локальному файлу параметр можно передать через URL вида <code>file:///C:/…/gesture-fx.html?obs</code> со снятой галочкой «Локальный файл»).<br>
+    3. Включи «Управлять аудио через OBS», чтобы звуки эффектов шли в стрим.<br>
+    4. Положи источник «Браузер» поверх камеры с тем же размером и положением. Настроить внутри OBS: ПКМ по источнику → «Взаимодействовать», клавиша H.`}));
+  listCameras();
+}
+function exportCfg(){ const c=JSON.parse(JSON.stringify(cfg)); if(c.settings.obsWs) c.settings.obsWs.password=''; return c; }
+function importConfig(text){
+  try{ const c=JSON.parse(text); if(!c||!Array.isArray(c.rules)) throw new Error('нет rules');
+    const d=defaultConfig(), pw=cfg.settings.obsWs?.password||'';
+    cfg={...d,...c,settings:{...d.settings,...(c.settings||{})},customGestures:Array.isArray(c.customGestures)?c.customGestures:[]};
+    cfg.settings.obsWs={...d.settings.obsWs,...(cfg.settings.obsWs||{})}; if(!cfg.settings.obsWs.password) cfg.settings.obsWs.password=pw;
+    save(); renderAll(); startCamera(); obsConnect(); toast('Конфиг загружен'); }catch(e){ toast('Не получилось: '+e.message); }
+}
+function renderAll(){ renderRules(); renderCustom(); renderLibrary(); renderSettings(); }
+
+// ====================== Старт ======================
+document.body.classList.toggle('solid', !obsMode);
+if(obsMode) $('#gear').classList.add('hidden');
+renderAll();
+requestAnimationFrame(loop);
+startCamera();
+initModel();
+obsConnect();
+</script>
+</body>
+</html>
