@@ -14,7 +14,7 @@
     font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
   body.solid{background:var(--bg)}
   canvas#stage{position:fixed;inset:0;width:100vw;height:100vh;display:block}
-  video{display:none}
+  #video{display:none}
   #hud{position:fixed;left:10px;top:10px;padding:6px 10px;border-radius:8px;background:rgba(0,0,0,.55);
     font:12px/1.4 ui-monospace,Consolas,monospace;pointer-events:none;white-space:pre}
   #gear{position:fixed;right:12px;top:12px;width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
@@ -69,11 +69,21 @@
   .egrid button{width:32px;height:32px;border:0;background:none;border-radius:6px;cursor:pointer;padding:0;
     font:20px/32px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}
   .egrid button:hover{background:#2c3040}
+  /* картинки, GIF и видео — отдельный слой поверх canvas, браузер анимирует их сам */
+  #media{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+  #media img,#media video{position:absolute;left:0;top:0;height:auto;will-change:transform,opacity}
+  .mthumb{width:40px;height:40px;flex:none;display:inline-flex;align-items:center;justify-content:center;background:#1b1d27;border:1px solid var(--line);border-radius:6px;overflow:hidden;color:var(--muted)}
+  .mthumb img,.mthumb video{width:40px;height:40px;object-fit:contain}
+  .mgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .mgrid .card{margin:0;display:flex;flex-direction:column;gap:4px}
+  .mgrid .mth{width:100%;height:90px;object-fit:contain;background:#1b1d27;border-radius:6px}
+  .mname{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
 </head>
 <body>
 <video id="video" playsinline muted></video>
 <canvas id="stage"></canvas>
+<div id="media"></div>
 <div id="hud"></div>
 <button id="gear" title="Настройки (H)">⚙</button>
 <div id="panel" class="hidden">
@@ -211,6 +221,54 @@ function groupEmoji(i, tone){
   r={list,hidden}; groupCache.set(key,r); return r;
 }
 
+// ====================== Медиа: картинки, GIF, видео ======================
+// Показываются DOM-элементами в слое #media (canvas у GIF рисует только первый кадр).
+// Источники: загруженный файл (IndexedDB, ссылка вида media:<id>), путь рядом с html или URL.
+const mediaLayer=$('#media');
+const mediaDB={db:null,items:[],urls:new Map(),seq:0};
+function idb(){ if(mediaDB.db) return Promise.resolve(mediaDB.db);
+  return new Promise((res,rej)=>{ const r=indexedDB.open('gesturefx',1);
+    r.onupgradeneeded=()=>r.result.createObjectStore('media',{keyPath:'id'});
+    r.onsuccess=()=>{ mediaDB.db=r.result; res(r.result); }; r.onerror=()=>rej(r.error); }); }
+function idbReq(mode,fn){ return idb().then(db=>new Promise((res,rej)=>{ const rq=fn(db.transaction('media',mode).objectStore('media'));
+  rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); })); }
+async function mediaLoad(){ try{ mediaDB.items=(await idbReq('readonly',s=>s.getAll())).sort((a,b)=>a.added-b.added); }catch(e){ console.warn('IndexedDB недоступен',e); } }
+async function mediaAdd(file){
+  const rec={id:uid(),name:file.name,type:file.type||'',size:file.size,blob:file,added:Date.now()};
+  await idbReq('readwrite',s=>s.put(rec)); mediaDB.items.push(rec); return rec;
+}
+async function mediaDel(id){
+  await idbReq('readwrite',s=>s.delete(id)); mediaDB.items=mediaDB.items.filter(x=>x.id!==id);
+  const u=mediaDB.urls.get(id); if(u){ URL.revokeObjectURL(u); mediaDB.urls.delete(id); }
+}
+const mediaItem=id=>mediaDB.items.find(x=>x.id===id);
+const isVideoName=s=>/\.(webm|mp4|m4v|mov|ogv)(\?|#|$)/i.test(s);
+const fmtSize=b=>b>=1e6?(b/1e6).toFixed(1)+' МБ':Math.round(b/1e3)+' КБ';
+// ссылка из правила -> {url, blob?, video, name} или null
+function mediaResolve(ref){
+  ref=String(ref||'').trim(); if(!ref) return null;
+  if(ref.startsWith('media:')){ const it=mediaItem(ref.slice(6)); if(!it) return null;
+    let u=mediaDB.urls.get(it.id); if(!u){ u=URL.createObjectURL(it.blob); mediaDB.urls.set(it.id,u); }
+    return {url:u,blob:it.blob,video:it.type.startsWith('video/')||isVideoName(it.name),name:it.name}; }
+  return {url:ref,video:isVideoName(ref),name:ref.split(/[\\/]/).pop()};
+}
+// Создаёт img/video. fresh=true — для показа в эфире: новый ресурс, чтобы GIF начинался с первого кадра
+// (браузер синхронизирует анимацию у всех картинок с одним URL).
+function mediaEl(m,fresh){
+  let url=m.url, revoke=null;
+  if(fresh){ if(m.blob){ url=URL.createObjectURL(m.blob); revoke=url; }
+    else if(!/^(data|blob):/.test(url)) url+=(url.includes('?')?'&':'?')+'gfx='+(++mediaDB.seq); }
+  let e;
+  if(m.video){ e=document.createElement('video'); e.muted=true; e.loop=true; e.autoplay=true; e.playsInline=true; e.src=url; e.play().catch(()=>{}); }
+  else { e=document.createElement('img'); e.decoding='async'; e.src=url; }
+  e.onerror=()=>{ if(fresh) toast('Не удалось загрузить: '+m.name); };
+  if(revoke) e.addEventListener('gfx-dispose',()=>URL.revokeObjectURL(revoke));
+  return e;
+}
+const preloaded=new Set();
+function mediaPreload(ref){ const m=mediaResolve(ref); if(!m||m.blob||m.video||preloaded.has(m.url)) return; preloaded.add(m.url); const i=new Image(); i.src=m.url; }
+function preloadRuleMedia(){ for(const r of cfg.rules) if(r.enabled&&EFFECTS[r.effect]?.params?.media) mediaPreload(ruleParams(r).media); }
+
 // ====================== Эффекты ======================
 const cv = $('#stage'), g = cv.getContext('2d');
 let W=0, H=0;
@@ -220,6 +278,7 @@ addEventListener('resize', resize); resize();
 const fx = [];
 const cam = {shakeUntil:0, shakeAmp:0, shakeDur:1, zoom:null, glitchUntil:0};
 const tips = new Map();   // «жест» или «жест@рука» -> последняя позиция кончика указательного пальца
+const anchors = new Map(); // то же для центра ладони (картинки, следующие за рукой)
 const now = () => performance.now();
 
 const DRAW = {
@@ -336,6 +395,31 @@ const EFFECTS = {
             g.beginPath(); g.moveTo(pts[0][0],pts[0][1]); for(const q of pts) g.lineTo(q[0],q[1]); g.stroke(); }
           g.restore(); })); }
       fx.push(entity(0.25,function(){ g.save(); g.globalAlpha=0.35*(1-this.age/this.life); g.fillStyle=p.color; g.fillRect(0,0,W,H); g.restore(); })); }},
+  image:{name:'Картинка / GIF / видео',icon:'🖼️',sound:'pop',anchored:true,
+    params:{media:{label:'Файл',type:'media',def:''},width:{label:'Ширина, px',type:'number',def:320},
+      where:{label:'Где',type:'select',options:{hand:'у руки',center:'по центру',random:'случайно',top:'сверху',bottom:'снизу'},def:'hand'},
+      anim:{label:'Анимация',type:'select',options:{pop:'выскочить',float:'всплыть',fade:'проявиться',slide:'выехать снизу',none:'без анимации'},def:'pop'},
+      follow:{label:'',type:'bool',text:'следовать за рукой (если «у руки»)',def:false},
+      duration:P.duration(3)},
+    run(p,a,src){
+      const m=mediaResolve(p.media); if(!m){ toast(p.media?'Файл не найден: '+p.media:'В правиле «Картинка» не выбран файл'); return; }
+      const pos=p.where==='center'?{x:W/2,y:H/2}:p.where==='random'?{x:rnd(W*0.15,W*0.85),y:rnd(H*0.15,H*0.85)}
+        :p.where==='top'?{x:W/2,y:H*0.22}:p.where==='bottom'?{x:W/2,y:H*0.78}:{x:a.x,y:a.y};
+      const e=mediaEl(m,true); e.style.width=p.width+'px'; e.style.opacity=0; mediaLayer.append(e);
+      const sway=rnd(0,6.28), IN=0.3, OUT=0.35;
+      const ent=entity(p.duration,null,function(){
+        const d=this.life, t=this.age/d, tin=Math.min(1,this.age/IN), tout=clamp((this.age-(d-OUT))/OUT,0,1);
+        if(p.follow&&p.where==='hand'){ const c=anchors.get(src); if(c){ pos.x=c.x; pos.y=c.y; } }
+        let x=pos.x, y=pos.y, s=1, al=1;
+        switch(p.anim){
+          case 'pop': s=(1-Math.pow(1-tin,3))*1.15-0.15*clamp((this.age-IN)/0.15,0,1); al=1-tout; break;
+          case 'float': y-=t*H*0.25; x+=Math.sin(this.age*2+sway)*12; al=Math.min(1,this.age/0.25)*(1-tout); break;
+          case 'fade': al=tin*(1-tout); break;
+          case 'slide': { const k=1-Math.pow(1-tin,3); y+=(1-k)*H*0.6+tout*tout*H*0.6; } break;
+        }
+        e.style.transform=`translate(${x}px,${y}px) translate(-50%,-50%) scale(${s})`; e.style.opacity=al; });
+      ent.dispose=()=>{ e.dispatchEvent(new Event('gfx-dispose')); e.remove(); };
+      fx.push(ent); }},
   snow:{name:'Снег',icon:'❄️',sound:'chime',
     params:{count:P.count(160),duration:P.duration(6)},
     run(p){ for(let i=0;i<p.count;i++) fx.push(particle({kind:'dot',x:rnd(0,W),y:-10,vx:rnd(-20,20),vy:rnd(40,110),life:12,r:rnd(1.5,4.5),
@@ -526,7 +610,7 @@ function loadConfig(){
 }
 let cfg=loadConfig();
 let saveT=null;
-function save(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{ localStorage.setItem(STORE_KEY,JSON.stringify(cfg)); }catch(e){ console.warn('save failed',e); } },250); }
+function save(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{ localStorage.setItem(STORE_KEY,JSON.stringify(cfg)); }catch(e){ console.warn('save failed',e); } preloadRuleMedia(); },250); }
 
 function ruleParams(rule){
   const def=EFFECTS[rule.effect]?.params||{}, out={};
@@ -706,7 +790,8 @@ function fireRule(rule, anchor, src){
 }
 function processRules(t){
   activeNow=computeActive();
-  for(const [id,arr] of activeNow){ for(const a of arr) tips.set(id+'@'+a.hand,a.tip); tips.set(id,bestOf(arr).tip); }
+  for(const [id,arr] of activeNow){ for(const a of arr){ tips.set(id+'@'+a.hand,a.tip); anchors.set(id+'@'+a.hand,a.anchor); }
+    const b=bestOf(arr); tips.set(id,b.tip); anchors.set(id,b.anchor); }
   for(const rule of cfg.rules){
     if(!rule.enabled) continue;
     let states=ruleState.get(rule.id); if(!states){ states=new Map(); ruleState.set(rule.id,states); }
@@ -792,14 +877,16 @@ function loop(){
   else if(isObsInput()&&hands.length&&t-shot.lastT>800){ hands=[]; processRules(t); }  // кадры перестали приходить
   g.clearRect(0,0,W,H);
   g.save();
-  if(t<cam.shakeUntil){ const k=(cam.shakeUntil-t)/cam.shakeDur; g.translate(rnd(-1,1)*cam.shakeAmp*k,rnd(-1,1)*cam.shakeAmp*k); }
+  if(t<cam.shakeUntil){ const k=(cam.shakeUntil-t)/cam.shakeDur, sx=rnd(-1,1)*cam.shakeAmp*k, sy=rnd(-1,1)*cam.shakeAmp*k;
+    g.translate(sx,sy); mediaLayer.style.transform=`translate(${sx}px,${sy}px)`; }
+  else if(mediaLayer.style.transform) mediaLayer.style.transform='';
   drawCamera(t);
   g.restore();
   drawGlitch(t);
   if(cfg.settings.showSkeleton||rec) drawSkeleton();
-  for(let i=fx.length-1;i>=0;i--){ if(!fx[i].update(dt)) fx.splice(i,1); }
+  for(let i=fx.length-1;i>=0;i--){ if(!fx[i].update(dt)){ fx[i].dispose&&fx[i].dispose(); fx.splice(i,1); } }
   for(const e of fx) e.draw&&e.draw();
-  if(fx.length>4000) fx.splice(0,fx.length-4000);
+  if(fx.length>4000) for(const e of fx.splice(0,fx.length-4000)) e.dispose&&e.dispose();
   if(rec){ if(t<rec.start) drawOverlayText(String(Math.ceil((rec.start-t)/1000)),`Приготовься: ${rec.hands===2?'две руки':'одна рука'} в кадре`);
     else drawOverlayText('Запись…',`Держи жест и чуть двигай рукой · кадров: ${rec.samples.length}`); }
   if(statusMsg&&(!obsMode||!$('#panel').classList.contains('hidden'))) drawOverlayText('Gesture FX',statusMsg);
@@ -866,8 +953,30 @@ function emojiField(val,onchange){
   renderChips();
   return wrap;
 }
+function mediaField(val,onchange){
+  val=String(val||''); const isMedia=()=>val.startsWith('media:');
+  const wrap=el('div',{class:'efield'}), thumb=el('span',{class:'mthumb'});
+  const sel=el('select',{class:'grow'});
+  const url=el('input',{type:'text',class:'grow',value:isMedia()?'':val,placeholder:'ссылка https://… или путь рядом с html: img/pog.gif',oninput:e=>set(e.target.value)});
+  const file=el('input',{type:'file',accept:'image/*,video/*',style:'display:none',onchange:async e=>{ const f=e.target.files[0]; if(!f) return;
+    try{ const rec=await mediaAdd(f); set('media:'+rec.id); renderLibrary(); toast(`Загружено: ${f.name}`); }catch(err){ toast('Не удалось сохранить: '+err.message); } }});
+  function sync(){
+    sel.innerHTML=''; sel.append(el('option',{value:'url',selected:!isMedia()},'ссылка или путь…'));
+    for(const it of mediaDB.items) sel.append(el('option',{value:'media:'+it.id,selected:val==='media:'+it.id},it.name));
+    if(isMedia()&&!mediaItem(val.slice(6))) sel.prepend(el('option',{value:val,selected:true},'(файл удалён)'));
+    url.classList.toggle('hidden',isMedia());
+    thumb.innerHTML=''; const m=mediaResolve(val); if(m) thumb.append(mediaEl(m,false)); else thumb.textContent=val?'?':'';
+  }
+  function set(v){ val=String(v||''); onchange(val); sync(); }
+  sel.onchange=()=>set(sel.value==='url'?url.value:sel.value);
+  wrap.append(el('div',{class:'row'},sel,el('button',{class:'b i',title:'Загрузить файл с диска (хранится в этом браузере)',onclick:()=>file.click()},'📁'),thumb,file),
+    el('div',{class:'row'},url));
+  sync(); return wrap;
+}
 function paramInput(spec,val,onchange){
   if(spec.type==='emoji') return emojiField(val,onchange);
+  if(spec.type==='media') return mediaField(val,onchange);
+  if(spec.type==='bool') return el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:!!val,onchange:e=>onchange(e.target.checked)}),' '+spec.text);
   if(spec.type==='select'){ const s=el('select',{onchange:e=>onchange(e.target.value)});
     for(const [k,l] of Object.entries(spec.options)) s.append(el('option',{value:k,selected:k===val},l)); return s; }
   if(spec.type==='number') return el('input',{type:'number',step:'any',value:val,onchange:e=>onchange(parseFloat(e.target.value)||0)});
@@ -946,6 +1055,21 @@ function renderLibrary(){
         el('button',{class:'b i',onclick:()=>{cfg.rules.push({id:uid(),enabled:true,gesture:'Open_Palm',effect:id,params:{},sound:e.sound,hold:350,cooldown:2500,repeat:false});save();renderRules();toast('Добавлено в «Правила» — выбери жест');}},'+ правило'))));
   }
   root.append(grid);
+  root.append(el('h3',{},'Медиа: картинки, GIF, видео'));
+  const up=el('input',{type:'file',accept:'image/*,video/*',multiple:true,style:'display:none',onchange:async e=>{
+    let n=0; for(const f of e.target.files){ try{ await mediaAdd(f); n++; }catch(err){ toast('Не удалось сохранить '+f.name+': '+err.message); } }
+    renderLibrary(); renderRules(); if(n) toast(`Загружено файлов: ${n}`); }});
+  root.append(el('div',{class:'row'},el('button',{class:'b p',onclick:()=>up.click()},'📁 Загрузить файлы'),up,
+    el('span',{class:'hint'},'PNG, JPG, GIF, WebP, APNG, WebM, MP4')));
+  root.append(el('p',{class:'hint'},'Файлы хранятся в этом браузере (IndexedDB) и в экспорт не попадают. Для переноса между машинами удобнее положить файлы рядом с html и в правиле указать путь, например img/pog.gif.'));
+  if(mediaDB.items.length){ const mg=el('div',{class:'mgrid'});
+    for(const it of mediaDB.items){ const th=mediaEl(mediaResolve('media:'+it.id),false); th.className='mth';
+      mg.append(el('div',{class:'card'},th,el('div',{class:'mname',title:it.name},it.name),el('div',{class:'hint'},fmtSize(it.size)),
+        el('div',{class:'row'},
+          el('button',{class:'b i',title:'Показать',onclick:()=>fireRule({effect:'image',params:{media:'media:'+it.id,where:'center'},sound:'none'})},'▶'),
+          el('button',{class:'b i',onclick:()=>{cfg.rules.push({id:uid(),enabled:true,gesture:'Open_Palm',effect:'image',params:{media:'media:'+it.id},sound:'pop',hold:350,cooldown:2500,repeat:false});save();renderRules();toast('Добавлено в «Правила» — выбери жест');}},'+ правило'),
+          el('button',{class:'b i d',title:'Удалить',onclick:async()=>{ if(!confirm(`Удалить «${it.name}»?`)) return; await mediaDel(it.id); renderLibrary(); renderRules(); }},'✕')))); }
+    root.append(mg); }
   root.append(el('h3',{},'Встроенные жесты'));
   root.append(el('p',{class:'hint'},Object.values(BUILTIN).map(b=>`${b.icon} ${b.name}`).join(' · ')));
   root.append(el('p',{class:'hint'},'Распознаются на обеих руках одновременно: разные жесты на разных руках запускают свои правила, одинаковый жест двумя руками — эффект из каждой руки (если в правиле включено «с каждой руки отдельно»).'));
@@ -1043,7 +1167,7 @@ function renderAll(){ renderRules(); renderCustom(); renderLibrary(); renderSett
 // ====================== Старт ======================
 // Для консоли: GFX.fire('reaction',{emoji:'🔥'}), GFX.emojiTokens('👨‍👩‍👧🇷🇺'), GFX.cfg()
 window.GFX={cfg:()=>cfg,effects:EFFECTS,fire:(effect,params={},anchor)=>fireRule({effect,params,sound:'none'},anchor),
-  emojiTokens,withTone,emojiRenders,groupEmoji,
+  emojiTokens,withTone,emojiRenders,groupEmoji,media:{add:mediaAdd,del:mediaDel,items:()=>mediaDB.items,resolve:mediaResolve},
   _test:{setHands:h=>{hands=h;},computeActive,processRules,handFeature,toScreen,rules:()=>cfg.rules,fx}};
 document.body.classList.toggle('solid', !obsMode);
 if(obsMode) $('#gear').classList.add('hidden');
@@ -1052,6 +1176,7 @@ requestAnimationFrame(loop);
 startCamera();
 initModel();
 obsConnect();
+mediaLoad().then(()=>{ renderLibrary(); renderRules(); preloadRuleMedia(); });
 </script>
 </body>
 </html>
