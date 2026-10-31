@@ -601,6 +601,12 @@ GFX.knobState                                       // текущие значе
 
 ### Данные и зависимости
 
+Браузерные регрессионные тесты: `python3 -m unittest discover -s tests -v` из корня
+репозитория. Нужны Python с пакетом `playwright` и Chromium (`/usr/bin/chromium` по
+умолчанию, другой путь — через `CHROMIUM_PATH`). Проверяются отрисовка дождя эмодзи
+и срабатывание правила 👎 на синтетическом результате модели; камера, OBS и загрузка
+MediaPipe для этих проверок не нужны.
+
 - MediaPipe Tasks Vision `1.2.0` с jsDelivr, модели `gesture_recognizer.task`,
   `face_landmarker.task` (478 точек + 52 blendshapes) и `pose_landmarker_lite.task` (float16) из
   `storage.googleapis.com/mediapipe-models`. Версии — константы в начале скрипта. Лицо и поза

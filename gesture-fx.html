@@ -340,7 +340,8 @@ const DRAW = {
   confetti(){ g.save(); g.translate(this.x,this.y); g.rotate(this.rot); g.scale(Math.cos(this.age*this.flip),1);
     g.fillStyle=this.color; g.fillRect(-this.w/2,-this.h/2,this.w,this.h); g.restore(); },
   emoji(){ const s=this.size*(this.grow?Math.min(1,0.4+this.age*2):1);
-    g.save(); g.translate(this.x+Math.sin(this.age*3+this.ph)*(this.wob||0), this.y); g.rotate(this.rot||0);
+    // У дождя нет ph/wob: даже NaN * 0 даёт NaN, и canvas игнорирует translate.
+    g.save(); g.translate(this.x+Math.sin(this.age*3+(this.ph??0))*(this.wob||0), this.y); g.rotate(this.rot||0);
     g.font=`${s}px ${EMOJI_FONT}`; g.textAlign='center'; g.textBaseline='middle'; g.fillText(this.ch,0,0); g.restore(); },
   dot(){ g.save(); g.globalCompositeOperation='lighter'; g.fillStyle=this.color; g.shadowColor=this.color; g.shadowBlur=12;
     g.beginPath(); g.arc(this.x,this.y,this.r*(this.shrink?Math.max(0.1,1-this.age/this.life):1),0,Math.PI*2); g.fill(); g.restore(); },
