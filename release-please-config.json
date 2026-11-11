@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "a944ccc91ac6ec515ecf2e9d7ad6fe2ad153b497",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "gesture-fx",
+      "include-component-in-tag": false,
+      "include-v-in-tag": true,
+      "draft": true,
+      "force-tag-creation": true,
+      "extra-files": ["gesture-fx.html"],
+      "changelog-sections": [
+        {"type": "feat", "section": "Возможности", "hidden": false},
+        {"type": "fix", "section": "Исправления", "hidden": false},
+        {"type": "perf", "section": "Производительность", "hidden": false},
+        {"type": "revert", "section": "Отменённые изменения", "hidden": false},
+        {"type": "docs", "section": "Документация", "hidden": false},
+        {"type": "ci", "section": "Сборка и CI", "hidden": false},
+        {"type": "build", "section": "Сборка и CI", "hidden": false},
+        {"type": "chore", "section": "Обслуживание", "hidden": true},
+        {"type": "refactor", "section": "Внутренние изменения", "hidden": true},
+        {"type": "test", "section": "Тесты", "hidden": true},
+        {"type": "style", "section": "Стиль кода", "hidden": true}
+      ]
+    }
+  }
+}

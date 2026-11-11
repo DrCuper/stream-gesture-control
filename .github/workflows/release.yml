@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to rebuild (for example v1.1.0); leave empty to update the release PR'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main' && inputs.tag == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      # GITHUB_TOKEN does not trigger CI on bot-created PRs, so check the merged
+      # source here as well, before creating a release.
+      - name: Test and validate source
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 scripts/build_release.py --check
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release
+    if: >-
+      always() && !cancelled() &&
+      (needs.release.outputs.release_created == 'true' ||
+       (github.event_name == 'workflow_dispatch' && inputs.tag != ''))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || needs.release.outputs.tag_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'Expected a stable version tag such as v1.1.0' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - name: Test and build the tagged version
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 scripts/build_release.py --tag "$RELEASE_TAG"
+      - name: Upload files and publish release
+        shell: bash
+        run: |
+          gh release view "$RELEASE_TAG" > /dev/null
+          gh release upload "$RELEASE_TAG" \
+            dist/gesture-fx.html dist/CHANGELOG.md dist/README.md dist/SHA256SUMS --clobber
+          if [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" == true ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi
