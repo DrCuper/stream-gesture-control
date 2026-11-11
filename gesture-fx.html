@@ -3,111 +3,166 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="gesturefx-source-revision" content="local">
+<meta name="gesturefx-version" content="1.0.0"> <!-- x-release-please-version -->
 <title>Gesture FX</title>
 <style>
-  :root{
-    --bg:#0e0f14; --panel:rgba(18,19,26,.94); --line:#2a2c38; --text:#e8e9f0; --muted:#8b8ea3;
-    --accent:#7c5cff; --accent2:#34e1ff; --danger:#ff4d6d; --ok:#3bceac;
-  }
+  :root{color-scheme:dark;--bg:#101212;--panel:#151717;--surface:#1b1e1d;--line:#2b302d;--text:#eff2ed;--muted:#929b95;--accent:#b7ee81;--accent2:#8ddfc8;--danger:#f48a8a;--ok:#b7ee81}
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%;overflow:hidden;background:transparent;color:var(--text);
-    font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  html,body{margin:0;height:100%;overflow:hidden;background:transparent;color:var(--text);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
   body.solid{background:var(--bg)}
-  canvas#stage{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+  button,input,select,textarea{font:inherit}
+  button{cursor:pointer}button:disabled{cursor:default;opacity:.45}
+  button,input,select,textarea,summary{outline-offset:4px}
+  :focus-visible{outline:2px solid var(--accent)}
+  svg.icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  #stage-shell{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+  #preview-window #stage-shell{position:absolute;inset:0;z-index:2}
+  canvas#stage{width:100%;height:100%;display:block}
   #video{display:none}
-  #hud{position:fixed;left:10px;top:10px;padding:6px 10px;border-radius:8px;background:rgba(0,0,0,.55);
-    font:12px/1.4 ui-monospace,Consolas,monospace;pointer-events:none;white-space:pre}
-  #gear{position:fixed;right:12px;top:12px;width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
-    background:var(--panel);color:var(--text);font-size:18px;cursor:pointer}
-  #panel{position:fixed;right:0;top:0;bottom:0;width:400px;max-width:100vw;background:var(--panel);
-    border-left:1px solid var(--line);display:flex;flex-direction:column;backdrop-filter:blur(8px)}
+  #hud{position:fixed;left:12px;top:12px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(16,18,18,.85);font:11px/1.6 ui-monospace,Consolas,monospace;pointer-events:none;white-space:pre}
+  body.studio-open #hud{display:none}
+  #gear{position:fixed;right:16px;top:16px;padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);display:flex;align-items:center;gap:9px}
+  #panel{position:fixed;inset:0;display:grid;grid-template-columns:206px minmax(0,1fr);background:var(--bg)}
   .hidden{display:none!important}
-  #panel header{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
-  #panel header b{font-size:15px;flex:1}
-  .tabs{display:flex;border-bottom:1px solid var(--line)}
-  .tabs button{flex:1;padding:10px 4px;background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);cursor:pointer;font:inherit}
-  .tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
-  .body{flex:1;overflow:auto;padding:12px 14px 40px}
-  .card{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;background:rgba(255,255,255,.02)}
-  .card.off{opacity:.5}
-  .row{display:flex;gap:8px;align-items:center;margin:6px 0;flex-wrap:wrap}
-  .row label{color:var(--muted);min-width:90px}
-  .grow{flex:1;min-width:0}
-  input,select,textarea{background:#1b1d27;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 7px;font:inherit}
-  input[type=number]{width:80px}
-  input[type=color]{width:42px;height:28px;padding:1px}
-  input[type=range]{flex:1}
-  textarea{width:100%;min-height:90px;font:11px ui-monospace,Consolas,monospace}
-  button.b{background:#232633;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px 10px;cursor:pointer;font:inherit}
-  button.b:hover{border-color:var(--accent)}
-  button.p{background:var(--accent);border-color:var(--accent)}
-  button.d{color:var(--danger)}
-  button.i{padding:4px 8px}
-  h3{margin:14px 0 8px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
-  .hint{color:var(--muted);font-size:12px;margin:6px 0}
-  .pill{display:inline-block;padding:1px 7px;border-radius:99px;background:#232633;color:var(--muted);font-size:11px}
-  .live{font:11px ui-monospace,Consolas,monospace}
-  .live.hit{color:var(--ok)}
-  .st-ok{color:var(--ok)} .st-err{color:var(--danger)}
-  .fxgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .fxgrid .card{margin:0;display:flex;flex-direction:column;gap:6px}
-  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#232633;border:1px solid var(--line);
-    padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none}
-  #toast.show{opacity:1}
-  code{background:#1b1d27;padding:1px 5px;border-radius:4px}
-  /* поле «Эмодзи»: фишки разобранных эмодзи + выбор из полного набора */
-  .efield{flex:1;min-width:0}
-  .efield .row{margin:0}
-  .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
-  .chip{padding:1px 6px;border-radius:6px;background:#232633;border:1px solid var(--line);cursor:pointer;
-    font:16px/1.3 "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}
-  .chip:hover{border-color:var(--danger)}
-  .etabs{display:flex;gap:2px;flex-wrap:wrap;align-items:center;margin-top:6px}
-  .etabs button.b{width:30px;height:30px;padding:0;font-size:16px}
-  .etabs button.on{background:var(--accent);border-color:var(--accent)}
-  .egrid{display:flex;flex-wrap:wrap;gap:1px;max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px;margin-top:6px;background:#1b1d27}
-  .egrid button{width:32px;height:32px;border:0;background:none;border-radius:6px;cursor:pointer;padding:0;
-    font:20px/32px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}
-  .egrid button:hover{background:#2c3040}
-  /* картинки, GIF и видео — отдельный слой поверх canvas, браузер анимирует их сам */
-  #media{position:fixed;inset:0;pointer-events:none;overflow:hidden}
-  #media img,#media video{position:absolute;left:0;top:0;height:auto;will-change:transform,opacity}
-  .mthumb{width:40px;height:40px;flex:none;display:inline-flex;align-items:center;justify-content:center;background:#1b1d27;border:1px solid var(--line);border-radius:6px;overflow:hidden;color:var(--muted)}
-  .mthumb img,.mthumb video{width:40px;height:40px;object-fit:contain}
-  .mgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .mgrid .card{margin:0;display:flex;flex-direction:column;gap:4px}
-  .mgrid .mth{width:100%;height:90px;object-fit:contain;background:#1b1d27;border-radius:6px}
-  .mname{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tabs button{padding:10px 2px;font-size:12px}
-  /* живые полоски значений («ручки», порог своих жестов) */
-  .bar{position:relative;height:6px;border-radius:3px;background:#232633;flex:1;min-width:60px;overflow:hidden}
-  .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);width:0}
-  .bar.on i{background:var(--ok)}
-  .steps{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
-  .steps select{max-width:150px}
+  .sidebar{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);padding:30px 16px 20px;background:#131515}
+  .brand{display:flex;gap:11px;align-items:center;padding:0 7px 38px}
+  .brand-mark{display:grid;place-items:center;width:36px;height:40px;background:var(--accent);color:#26331c;border-radius:11px;transform:rotate(-5deg)}
+  .brand-mark svg{width:25px;height:25px;transform:rotate(5deg)}
+  .brand b{font-size:18px;letter-spacing:-.7px}.brand small{display:block;color:var(--muted);font-size:9px;letter-spacing:1.7px;margin-top:2px}
+  .nav-label{font-size:10px;font-weight:600;letter-spacing:1.4px;color:#707b73;padding:0 13px 13px}
+  .tabs{display:flex;flex-direction:column;gap:6px}
+  .tabs button{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--muted);text-align:left;font-size:13px;white-space:nowrap}
+  .tabs button:hover{background:#1d211e;color:var(--text)}
+  .tabs button.on{color:var(--accent);background:#263021;border-color:#36432c}
+  .nav-count{margin-left:auto;font-size:10px;padding:1px 6px;border-radius:5px;background:#3a472f;color:var(--accent)}
+  .sidebar-bottom{margin-top:auto;padding:28px 4px 0}
+  .obs-connection{padding:14px 12px;border:1px solid var(--line);border-radius:10px;background:#191c1a}
+  .obs-connection b{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:500}.obs-connection small{display:block;margin:5px 0 10px;color:var(--muted);font-size:10px;line-height:1.6}
+  .obs-connection button{color:var(--text);background:none;border:0;font-size:11px;padding:0}
+  .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#929b95;flex:none}.dot.ready{background:var(--accent);box-shadow:0 0 10px #b7ee8140}
+  .sidebar-foot{display:flex;justify-content:space-between;margin-top:21px;color:#69746c;font-size:10px}
+  .studio{min-width:0;min-height:0;display:flex;flex-direction:column}
+  .topbar{height:75px;flex:none;border-bottom:1px solid var(--line);padding:0 32px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .breadcrumb{display:flex;align-items:center;gap:12px;font-size:11px;color:var(--muted)}.breadcrumb span:last-child{color:var(--text)}.breadcrumb .slash{color:#4a554d}
+  .top-actions{display:flex;gap:12px;align-items:center}.save-indicator{color:var(--muted);font-size:10px;display:flex;align-items:center;gap:7px}
+  kbd{font:10px inherit;border:1px solid #3a403c;background:#202520;border-radius:4px;padding:1px 5px;color:#c1c8c1}
+  .page-heading{padding:30px 32px 27px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .eyebrow{color:var(--accent);font-size:9px;letter-spacing:1.8px;font-weight:600;margin-bottom:9px}
+  h1{font-size:27px;line-height:1.2;font-weight:600;letter-spacing:-1px;margin:0 0 9px}.page-heading p{margin:0;color:var(--muted);font-size:12px}
+  .workspace{display:grid;grid-template-columns:minmax(0,1.16fr) minmax(360px,1fr);gap:24px;padding:0 32px 24px;flex:1;min-height:0}
+  .preview-column{min-width:0;display:flex;flex-direction:column;gap:18px;overflow:auto;scrollbar-width:thin}
+  .section-heading{display:flex;align-items:center;gap:8px;margin-bottom:14px;min-height:24px}.section-heading h2{font-size:13px;font-weight:500;margin:0;flex:1}.section-heading .caption{font-size:10px;color:var(--muted)}
+  .preview-card{border:1px solid var(--line);background:#171a18;border-radius:13px;overflow:hidden;flex-shrink:0}
+  .preview-toolbar{height:43px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--line);font-size:10px;color:var(--muted)}
+  .preview-toolbar span{display:flex;align-items:center;gap:7px}.preview-toolbar .preview-label{color:#c3cbc4}
+  #preview-window{position:relative;width:100%;aspect-ratio:16/9;min-height:0;overflow:hidden;background-color:#111511;background-image:linear-gradient(#26302444 1px,transparent 1px),linear-gradient(90deg,#26302444 1px,transparent 1px);background-size:32px 32px;display:grid;place-items:center;isolation:isolate}
+  #preview-window::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent,#101410a8);z-index:-1}
+  .preview-empty{text-align:center;max-width:280px;padding:20px;transition:opacity .15s}
+  .hand-orbit{height:85px;width:85px;display:grid;place-items:center;margin:0 auto 20px;border-radius:50%;border:1px solid #3d5131;background:#1b2816;box-shadow:0 0 0 10px #1b28164d,0 0 0 22px #1b281626;color:var(--accent)}
+  .hand-orbit svg{width:37px;height:37px;stroke-width:1.2}
+  .preview-empty h3{font-size:14px;font-weight:500;color:var(--text);text-transform:none;letter-spacing:0;margin:0 0 7px}.preview-empty p{font-size:11px;color:var(--muted);margin:0 0 15px;line-height:1.7}
+  .preview-footer{height:43px;padding:0 14px;display:flex;align-items:center;gap:7px;color:var(--muted);font-size:10px;border-top:1px solid var(--line)}.preview-footer span:last-child{margin-left:auto}
+  .telemetry{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line);border-radius:11px;background:#171a18;padding:15px 0}
+  .telemetry>div{padding:0 18px;border-right:1px solid var(--line)}.telemetry>div:last-child{border:0}.telemetry small{display:block;font-size:10px;color:var(--muted);margin-bottom:5px}.telemetry strong{font-size:19px;font-weight:500;letter-spacing:-.5px}.telemetry strong span{font-size:10px;color:var(--muted);font-weight:400;letter-spacing:0;margin-left:5px}
+  .quick-effects{border-top:1px solid var(--line);padding-top:19px}.quick-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.quick-fx{background:#1a1e1a;border:1px solid var(--line);border-radius:10px;color:var(--text);padding:15px 5px 12px;display:flex;align-items:center;flex-direction:column;gap:7px;font-size:10px;transition:border-color .15s,background .15s}.quick-fx:hover{border-color:#637a4f;background:#232c1e}.quick-fx .fx-emoji{font-size:23px}.quick-fx small{font-size:9px;color:var(--muted)}
+  .tip{display:flex;gap:10px;align-items:flex-start;padding:14px;border:1px solid #303c29;border-radius:10px;background:#1b2318;font-size:10px;color:#aab79f;line-height:1.8}.tip svg{color:var(--accent);width:16px;height:16px;margin-top:2px}.tip b{color:#d0dcc7;font-weight:500}
+  .controls{display:flex;flex-direction:column;min-height:0;min-width:0;background:#141715;border:1px solid var(--line);border-radius:13px;overflow:hidden}
+  .controls-header{padding:17px 18px 14px;border-bottom:1px solid var(--line);flex:none}.controls-header .section-heading{margin:0 0 12px}.controls-header h2{font-size:14px}.controls-header .pill{font-size:10px}
+  .search-wrap{display:flex;align-items:center;gap:8px;border:1px solid #30372f;border-radius:7px;background:#1a1e1a;padding:0 10px}.search-wrap svg{width:15px;color:var(--muted)}.search-wrap input{width:100%;min-width:0;border:0;background:transparent;padding:8px 0;font-size:11px;outline:none}
+  .search-wrap:focus-within{border-color:var(--accent);outline:1px solid var(--accent)}
+  .body{flex:1;overflow:auto;min-height:0;padding:16px 16px 24px;scrollbar-width:thin;scrollbar-color:#3b443c transparent}
+  .card{border:1px solid var(--line);border-radius:10px;padding:13px;margin-bottom:10px;background:#1b1f1b}.card.off{background:#171a17}.card.off .rule-route{opacity:.5}
+  .row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}.row label{color:var(--muted);min-width:90px;font-size:11px}.grow{flex:1;min-width:0}
+  input,select,textarea{max-width:100%;min-width:0;background:#141814;border:1px solid #343c32;color:var(--text);border-radius:6px;padding:7px 8px;font-size:12px}
+  input::placeholder,textarea::placeholder{color:#768171}input:disabled{opacity:.45}input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;flex:none;margin:0 3px 0 0}input[type=number]{width:76px}input[type=color]{width:42px;height:30px;padding:2px}input[type=range]{flex:1;accent-color:var(--accent)}
+  textarea{width:100%;min-height:110px;font:11px/1.6 ui-monospace,Consolas,monospace}
+  button.b{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:#252c23;border:1px solid #394332;color:var(--text);border-radius:7px;padding:8px 12px;font-size:11px;transition:background .15s,border-color .15s}.b svg{width:15px;height:15px}button.b:hover{border-color:#748862;background:#2e3829}button.p{background:var(--accent);border-color:var(--accent);color:#203013;font-weight:600}button.p:hover{background:#c7fa98;border-color:#c7fa98}button.d{color:var(--danger)}button.i{padding:6px;width:29px;height:29px}button.ghost{background:transparent;border-color:var(--line);color:#b6c0b3}
+  h3{margin:20px 0 10px;font-size:10px;font-weight:600;color:#abb8a5;text-transform:uppercase;letter-spacing:1px}.body>h3:first-child{margin-top:2px}.hint{color:var(--muted);font-size:11px;margin:8px 0;line-height:1.7}.pill{display:inline-block;padding:2px 7px;border:1px solid #35402e;border-radius:5px;background:#263021;color:#aebfa1;font-size:10px}.live{font:10px ui-monospace,Consolas,monospace}.live.hit,.st-ok{color:var(--ok)}.st-err{color:var(--danger)}
+  .rule-topline{display:flex;align-items:center;gap:7px;margin-bottom:12px}.rule-number{font:9px ui-monospace,Consolas,monospace;letter-spacing:1px;color:#7a8972;flex:1}.rule-switch{position:relative;display:flex;align-items:center}.rule-switch input{appearance:none;width:27px;height:16px;border-radius:20px;background:#343c32;border:0;margin:0;cursor:pointer;padding:0}.rule-switch input::after{content:"";position:absolute;width:10px;height:10px;background:#8c9787;border-radius:50%;left:3px;top:3px;transition:transform .15s}.rule-switch input:checked{background:var(--accent)}.rule-switch input:checked::after{transform:translateX(11px);background:#314522}
+  .rule-route{display:grid;grid-template-columns:minmax(0,1fr) 20px minmax(0,1fr);gap:5px;align-items:center}.route-field{min-width:0}.route-field>span{display:block;font-size:8px;letter-spacing:1.1px;color:#85917e;margin-bottom:6px}.route-field select{width:100%;font-size:11px;background:#22291f;padding:8px 5px;border-color:#3b4732}.route-arrow{color:#748367;text-align:center;padding-top:17px}.route-arrow svg{width:16px}.rule-meta{display:flex;align-items:center;gap:10px;color:#8d9d84;font-size:9px;margin-top:13px}.rule-meta span+span::before{content:"·";margin-right:10px;color:#56634e}
+  .rule-options{border-top:1px solid #30392b;margin-top:12px;padding-top:9px}.rule-options summary{cursor:pointer;color:#aab99f;font-size:10px;list-style:none;display:flex;align-items:center;justify-content:space-between}.rule-options summary::-webkit-details-marker{display:none}.rule-options summary::after{content:"+";font-size:14px}.rule-options[open] summary::after{content:"−"}.rule-options>.row:first-of-type{margin-top:15px}.rule-options .row label{min-width:80px}.rule-options .row input[type=number]{width:65px}
+  .rule-add{width:100%;border-style:dashed!important;background:transparent!important;color:var(--accent)!important;padding:12px!important;border-color:#4e613d!important}.empty-state{text-align:center;padding:25px 10px;color:var(--muted);font-size:12px}.empty-state strong{display:block;color:var(--text);font-size:14px;margin-bottom:6px}.rules-help{margin:16px 3px 0;color:#7c8a75;font-size:10px;line-height:1.8}
+  .fxgrid,.mgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.fxgrid .card,.mgrid .card{margin:0;display:flex;flex-direction:column;gap:6px}.fxgrid b{font-size:12px;font-weight:500}.fxgrid .row{gap:5px}.fxgrid button.b{font-size:10px;padding:6px}
+  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#283422;border:1px solid #576e42;color:#e0f1d3;padding:11px 18px;border-radius:9px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:20;max-width:calc(100vw - 32px);text-align:center;font-size:12px}#toast.show{opacity:1}
+  code{background:#242c20;padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+  .efield{flex:1;min-width:0}.efield .row{margin:0}.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}.chip{padding:1px 6px;border-radius:6px;background:#283223;border:1px solid var(--line);cursor:pointer;font:16px/1.3 "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}.chip:hover{border-color:var(--danger)}
+  .etabs{display:flex;gap:2px;flex-wrap:wrap;align-items:center;margin-top:6px}.etabs button.b{width:30px;height:30px;padding:0;font-size:16px}.etabs button.on{background:var(--accent);border-color:var(--accent)}.egrid{display:flex;flex-wrap:wrap;gap:1px;max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px;margin-top:6px;background:#151b13}.egrid button{width:32px;height:32px;border:0;background:none;border-radius:6px;cursor:pointer;padding:0;font:20px/32px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}.egrid button:hover{background:#303c28}
+  #media{position:absolute;inset:0;pointer-events:none;overflow:hidden}#media img,#media video{position:absolute;left:0;top:0;height:auto;will-change:transform,opacity}.mthumb{width:40px;height:40px;flex:none;display:inline-flex;align-items:center;justify-content:center;background:#171e14;border:1px solid var(--line);border-radius:6px;overflow:hidden;color:var(--muted)}.mthumb img,.mthumb video{width:40px;height:40px;object-fit:contain}.mgrid .mth{width:100%;height:90px;object-fit:contain;background:#171e14;border-radius:6px}.mname{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar{position:relative;height:6px;border-radius:3px;background:#303a29;flex:1;min-width:60px;overflow:hidden}.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);width:0}.bar.on i{background:var(--ok)}.steps{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.steps select{max-width:150px}
+  .studio-footer{display:flex;justify-content:space-between;gap:12px;padding:0 32px 14px;color:#6d7a67;font-size:9px}.studio-footer span{display:flex;gap:6px;align-items:center}
+  #update-dialog{width:min(480px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:23px;box-shadow:0 24px 90px #0009}
+  #update-dialog::backdrop{background:#080c08b8;backdrop-filter:blur(4px)}
+  .update-heading{display:flex;align-items:center;gap:12px;margin-bottom:14px}.update-heading h2{font-size:18px;font-weight:500;margin:0;flex:1}.update-heading>span{color:var(--accent)}
+  #update-dialog a{color:var(--accent);overflow-wrap:anywhere}.update-versions{display:grid;gap:9px;padding:14px;border:1px solid var(--line);border-radius:9px;margin:16px 0;background:var(--surface)}.update-versions>div{display:flex;gap:10px;justify-content:space-between;font-size:11px}.update-versions span{color:var(--muted)}
+  #update-status{font-size:12px;line-height:1.7;margin:15px 0;min-height:40px;overflow-wrap:anywhere}.update-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:17px}
+  @media(max-width:760px){.update-label,.breadcrumb>span:nth-child(2),.breadcrumb .slash{display:none}#check-update{padding:7px}.breadcrumb{min-width:0}.breadcrumb span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+  @media(min-width:1700px){.workspace{grid-template-columns:minmax(0,1.4fr) minmax(420px,1fr)}.studio{max-width:1800px;width:100%;margin:auto;height:100%}}
+  @media(max-width:1200px){#panel{grid-template-columns:172px minmax(0,1fr)}.sidebar{padding:25px 10px 18px}.brand{gap:9px}.brand b{font-size:16px}.topbar{padding:0 22px}.page-heading{padding:25px 22px}.workspace{padding:0 22px 20px;gap:18px;grid-template-columns:minmax(0,1fr) minmax(340px,1fr)}.hand-orbit{height:60px;width:60px;margin-bottom:16px}.hand-orbit svg{width:30px}.preview-empty{padding:17px}.preview-empty p{font-size:10px}.preview-empty h3{font-size:12px}.preview-empty button.b{padding:5px 9px}.telemetry>div{padding:0 11px}.save-indicator{display:none}.studio-footer{padding:0 22px 14px}}
+  @media(max-width:1000px){#panel{grid-template-columns:76px minmax(0,1fr)}.sidebar{padding:24px 10px 18px}.brand{padding:0 9px 35px}.brand-copy,.nav-label,.nav-text,.nav-count,.sidebar-bottom{display:none}.tabs button{justify-content:center;padding:14px 8px}.workspace{grid-template-columns:minmax(0,1fr) minmax(340px,1fr);gap:16px}.topbar{height:62px}.page-heading{padding:25px 22px}h1{font-size:24px}.preview-empty p{margin-bottom:10px}.hand-orbit{height:45px;width:45px;margin-bottom:13px;box-shadow:0 0 0 7px #1b28164d}.hand-orbit svg{width:25px}.telemetry small{font-size:9px}.quick-grid{gap:6px}}
+  @media(max-width:760px){html,body{overflow:hidden}#panel{grid-template-columns:1fr;grid-template-rows:57px minmax(0,1fr)}.sidebar{padding:0 12px;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:0;margin-right:auto}.brand-mark{width:29px;height:31px;border-radius:8px}.brand-mark svg{width:22px}.tabs{flex-direction:row;gap:3px}.tabs button{padding:8px 10px;border-radius:7px}.tabs button svg{width:18px;height:18px}.studio{overflow:auto}.topbar{padding:0 18px;height:55px}.breadcrumb{font-size:10px;gap:7px}.top-actions{gap:6px}.top-actions .b{padding:6px 8px;font-size:10px}.top-actions kbd{display:none}.page-heading{padding:23px 18px 21px;align-items:flex-start}h1{font-size:25px}.page-heading p{max-width:270px;font-size:11px}.page-heading>.b{padding:8px;white-space:nowrap;font-size:10px}.workspace{display:flex;flex-direction:column;padding:0 18px 20px;gap:22px;flex:none;min-height:0}.preview-column{overflow:visible;gap:13px}.preview-card{width:100%}.hand-orbit{height:65px;width:65px;margin-bottom:20px}.hand-orbit svg{width:31px}.preview-empty h3{font-size:13px}.preview-empty p{font-size:11px}.preview-empty .b{padding:7px 10px}.quick-effects,.tip{display:none}.controls{overflow:visible;min-height:300px}.body{overflow:visible;padding:14px}.controls-header{padding:15px}.studio-footer{padding:0 18px 18px;font-size:8px}.studio-footer span:last-child{display:none}.telemetry{padding:11px 0}.telemetry>div{padding:0 16px}.telemetry strong{font-size:17px}.telemetry small{font-size:10px}.section-heading{margin-bottom:10px}.page-heading .eyebrow{font-size:8px}#toast{bottom:15px}}
+  @media(max-width:760px){.page-heading{flex-direction:column;gap:15px}.page-heading p{max-width:none}.preview-empty{display:grid;grid-template-columns:42px minmax(0,1fr);text-align:left;gap:8px 15px;max-width:100%;padding:18px}.preview-empty .hand-orbit{grid-row:1/3;width:42px;height:42px;margin:0;box-shadow:0 0 0 7px #1b28164d}.preview-empty .hand-orbit svg{width:25px}.preview-empty h3{font-size:12px;margin:0}.preview-empty p{font-size:10px;line-height:1.6;margin:0}.preview-empty .b{grid-column:2;justify-self:start;padding:6px 8px;font-size:10px}.preview-footer{font-size:9px}}
+  @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>
 </head>
 <body>
 <video id="video" playsinline muted></video>
-<canvas id="stage"></canvas>
-<div id="media"></div>
+<div id="stage-shell"><canvas id="stage"></canvas><div id="media"></div></div>
 <div id="hud"></div>
-<button id="gear" title="Настройки (H)">⚙</button>
+<button id="gear" title="Открыть студию (H)" aria-label="Открыть студию" data-icon="sliders">Открыть студию</button>
 <div id="panel" class="hidden">
-  <header><b>Gesture FX</b><span class="pill">H — скрыть</span><button class="b i" id="close">✕</button></header>
-  <div class="tabs">
-    <button data-tab="rules" class="on">Правила</button>
-    <button data-tab="custom">Жесты</button>
-    <button data-tab="knobs">Ручки</button>
-    <button data-tab="library">Библиотека</button>
-    <button data-tab="settings">Настройки</button>
-  </div>
-  <div class="body" id="tab-rules"></div>
-  <div class="body hidden" id="tab-custom"></div>
-  <div class="body hidden" id="tab-knobs"></div>
-  <div class="body hidden" id="tab-library"></div>
-  <div class="body hidden" id="tab-settings"></div>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark" data-icon="wave"></span><div class="brand-copy"><b>Gesture FX<span style="color:var(--accent)">.</span></b><small>STREAM CONTROL</small></div></div>
+    <div class="nav-label">СТУДИЯ</div>
+    <nav class="tabs" aria-label="Разделы студии">
+      <button data-tab="rules" class="on" title="Правила" aria-current="page"><span data-icon="route"></span><span class="nav-text">Правила</span><span class="nav-count" id="nav-rule-count">0</span></button>
+      <button data-tab="custom" title="Жесты"><span data-icon="hand"></span><span class="nav-text">Жесты</span></button>
+      <button data-tab="knobs" title="Ручки"><span data-icon="sliders"></span><span class="nav-text">Ручки</span></button>
+      <button data-tab="library" title="Библиотека"><span data-icon="grid"></span><span class="nav-text">Библиотека</span></button>
+      <button data-tab="settings" title="Настройки"><span data-icon="settings"></span><span class="nav-text">Настройки</span></button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="obs-connection"><b><i class="dot" id="obs-dot"></i><span id="studio-obs">OBS не подключён</span></b><small id="studio-obs-hint">Подключи OBS, чтобы управлять стримом жестами.</small><button id="connect-obs">Настроить подключение ↗</button></div>
+      <div class="sidebar-foot"><span>Создавай в движении</span><span id="app-version"></span></div>
+    </div>
+  </aside>
+  <main class="studio">
+    <div class="topbar"><div class="breadcrumb"><span data-icon="home"></span><span>Рабочее пространство</span><span class="slash">/</span><span id="breadcrumb-tab">Правила</span></div><div class="top-actions"><span class="save-indicator" id="save-status" role="status"><i class="dot ready"></i>Автосохранение включено</span><button class="b ghost" id="check-update" title="Получить новую версию из GitHub" aria-label="Обновить Gesture FX"><span data-icon="refresh"></span><span class="update-label">Обновить</span></button><button class="b ghost" id="close" title="Скрыть студию (H)"><span data-icon="expand"></span>Оверлей <kbd>H</kbd></button></div></div>
+    <div class="page-heading"><div><div class="eyebrow">МЕНЬШЕ КЛИКОВ. БОЛЬШЕ МАГИИ.</div><h1 id="page-title">Твой стрим. Твои жесты.</h1><p id="page-description">Превращай движения в эффекты и управляй эфиром.</p></div><button class="b p" id="primary-action"><span data-icon="plus"></span>Добавить правило</button></div>
+    <div class="workspace">
+      <section class="preview-column" aria-label="Превью и состояние">
+        <div><div class="section-heading"><h2>Превью стрима</h2><span class="caption">Твоя сцена в реальном времени</span></div>
+          <div class="preview-card">
+            <div class="preview-toolbar"><span class="preview-label"><i class="dot" id="preview-dot"></i><span id="preview-source">Источник OBS</span></span><span>16:9 · Оверлей</span></div>
+            <div id="preview-window"><div class="preview-empty" id="preview-empty"><div class="hand-orbit" data-icon="hand"></div><h3 id="preview-title">Всё начинается с жеста</h3><p id="preview-message">Подключи камеру или источник OBS,<br>а магию оставь своим рукам.</p><button class="b ghost" id="setup-source"><span data-icon="camera"></span>Настроить источник</button></div></div>
+            <div class="preview-footer"><i class="dot" id="tracking-dot"></i><span id="tracking-status">Ожидание источника</span><span>Показать / скрыть студию <kbd>H</kbd></span></div>
+          </div>
+        </div>
+        <div class="telemetry"><div><small>Частота кадров</small><strong id="studio-fps">—<span>FPS</span></strong></div><div><small>Руки в кадре</small><strong id="studio-hands">0<span>из 2</span></strong></div><div><small>Активные правила</small><strong id="studio-rules">0<span>из 0</span></strong></div></div>
+        <div class="quick-effects"><div class="section-heading"><h2>Попробуй магию</h2><span class="caption">Нажми для проверки</span></div><div class="quick-grid"><button class="quick-fx" data-effect="confetti"><span class="fx-emoji">🎉</span>Конфетти<small>Чуть больше праздника</small></button><button class="quick-fx" data-effect="hearts"><span class="fx-emoji">💚</span>Сердечки<small>Любовь для чата</small></button><button class="quick-fx" data-effect="lightning"><span class="fx-emoji">⚡</span>Молния<small>Заряди свой эфир</small></button></div></div>
+        <div class="tip"><span data-icon="sparkles"></span><span><b>Один жест — целая реакция.</b><br>Добавь несколько правил на один жест, чтобы запускать эффекты вместе. Проверь их кнопкой ▶ в карточке.</span></div>
+      </section>
+      <section class="controls" aria-label="Управление">
+        <div class="controls-header"><div class="section-heading"><h2 id="section-title">Правила жестов</h2><span class="pill" id="section-count">0 правил</span></div><label class="search-wrap" id="search-wrap"><span data-icon="search"></span><input id="rule-search" type="search" placeholder="Найти жест или эффект…" aria-label="Найти правило по жесту или эффекту"></label></div>
+        <div class="body" id="tab-rules"></div>
+        <div class="body hidden" id="tab-custom"></div>
+        <div class="body hidden" id="tab-knobs"></div>
+        <div class="body hidden" id="tab-library"></div>
+        <div class="body hidden" id="tab-settings"></div>
+      </section>
+    </div>
+    <footer class="studio-footer"><span><i class="dot ready"></i>Настройки хранятся в этом браузере</span><span>Сделано для живых моментов ↗</span></footer>
+  </main>
 </div>
+<dialog id="update-dialog" aria-labelledby="update-title" aria-describedby="update-status">
+  <div class="update-heading"><span data-icon="refresh"></span><h2 id="update-title">Обновление Gesture FX</h2><button class="b i ghost" id="update-close" aria-label="Закрыть обновление">✕</button></div>
+  <p class="hint">Новая версия берётся из опубликованных <a href="https://github.com/DrCuper/stream-gesture-control/releases" target="_blank" rel="noopener noreferrer">релизов Gesture FX ↗</a>.</p>
+  <div class="update-versions"><div><span>Текущая сборка</span><b id="update-current">Локальная</b></div><div><span>В репозитории</span><b id="update-latest">—</b></div></div>
+  <p id="update-status" role="status" aria-live="polite">Проверяю обновление…</p>
+  <div id="update-notes" class="hidden"><h3>Что нового</h3><p class="hint" id="update-notes-text" style="white-space:pre-wrap;max-height:180px;overflow:auto"></p><a id="update-release-link" target="_blank" rel="noopener noreferrer">Открыть релиз ↗</a></div>
+  <p class="hint" id="update-instructions"></p>
+  <div class="update-actions"><button class="b ghost" id="update-recheck">Проверить снова</button><button class="b p" id="update-download" disabled>Скачать новую версию</button><button class="b hidden" id="update-install" disabled>Заменить файл…</button><button class="b p hidden" id="update-reload">Перезапустить</button></div>
+</dialog>
 <div id="toast"></div>
 <datalist id="dl-obs-scenes"></datalist><datalist id="dl-obs-sources"></datalist><datalist id="dl-obs-inputs"></datalist>
 
@@ -178,6 +233,27 @@ function el(tag, attrs={}, ...kids){
   for(const k of kids.flat()) if(k!=null) e.append(k.nodeType?k:document.createTextNode(k));
   return e;
 }
+const ICONS={
+  wave:'<path d="M3 12h3l3-8 4 16 3-12 2 4h3"/>',
+  route:'<rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M15 6h3v6M6 15v3h6M12 3l3 3-3 3M9 15l3 3-3 3"/>',
+  hand:'<path d="M8 13V6a2 2 0 0 1 4 0v6-8a2 2 0 0 1 4 0v8-5a2 2 0 0 1 4 0v8a7 7 0 0 1-12 5l-5-6a2 2 0 0 1 3-3l2 2Z"/>',
+  sliders:'<path d="M4 7h8m4 0h4M4 17h3m4 0h9"/><circle cx="14" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  settings:'<path d="m10 3-1 3-3 1-3 3 2 2-1 3 3 3 3-1 2 2 3-1 1-3 3-1v-4l-3-1-1-3h-3Z"/><circle cx="12" cy="12" r="3"/>',
+  home:'<path d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-8h6v8"/>',
+  expand:'<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
+  refresh:'<path d="M20 7a8 8 0 0 0-13-2L3 9m0-6v6h6M4 17a8 8 0 0 0 13 2l4-4m0 6v-6h-6"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  camera:'<rect x="3" y="5" width="13" height="14" rx="3"/><path d="m16 10 5-3v10l-5-3"/>',
+  search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+  sparkles:'<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3ZM20 2v4m-2-2h4"/>',
+  arrow:'<path d="M4 12h16m-5-5 5 5-5 5"/>',
+  play:'<path d="m8 5 11 7-11 7Z"/>',
+  trash:'<path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/>'
+};
+function iconMarkup(name){return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]||ICONS.sparkles}</svg>`;}
+function icon(name){return el('span',{html:iconMarkup(name)});}
+document.querySelectorAll('[data-icon]').forEach(e=>e.insertAdjacentHTML('afterbegin',iconMarkup(e.dataset.icon)));
 
 // ====================== Эмодзи ======================
 // Любой стандартный эмодзи — одна «фишка»: составные (👨‍👩‍👧, 🏳️‍🌈, 👍🏽, 🇷🇺, 1️⃣) не разваливаются на части.
@@ -307,8 +383,12 @@ function preloadRuleMedia(){ for(const r of cfg.rules) if(r.enabled&&EFFECTS[r.e
 // ====================== Эффекты ======================
 const cv = $('#stage'), g = cv.getContext('2d');
 let W=0, H=0;
-function resize(){ W=cv.width=innerWidth; H=cv.height=innerHeight; }
+function resize(){
+  const r=$('#stage-shell').getBoundingClientRect();
+  W=cv.width=Math.max(1,Math.round(r.width)); H=cv.height=Math.max(1,Math.round(r.height));
+}
 addEventListener('resize', resize); resize();
+new ResizeObserver(resize).observe($('#preview-window'));
 
 const fx = [];
 const cam = {shakeUntil:0, shakeAmp:0, shakeDur:1, zoom:null, glitchUntil:0};
@@ -754,7 +834,18 @@ function loadConfig(){
 }
 let cfg=loadConfig();
 let saveT=null;
-function save(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{ localStorage.setItem(STORE_KEY,JSON.stringify(cfg)); }catch(e){ console.warn('save failed',e); } preloadRuleMedia(); },250); }
+function save(){
+  updateStudioCounts(); $('#save-status').textContent='Сохраняю…';
+  clearTimeout(saveT); saveT=setTimeout(()=>{
+    persistConfig();
+    preloadRuleMedia();
+  },250);
+}
+function persistConfig(){
+  clearTimeout(saveT); saveT=null;
+  try{ localStorage.setItem(STORE_KEY,JSON.stringify(cfg)); $('#save-status').textContent='Все изменения сохранены'; return true; }
+  catch(e){ console.warn('save failed',e); $('#save-status').textContent='Не удалось сохранить настройки'; toast('Не удалось сохранить настройки в браузере. Сохрани конфиг через экспорт.'); return false; }
+}
 
 function ruleParams(rule){
   const def=EFFECTS[rule.effect]?.params||{}, out={};
@@ -1446,7 +1537,7 @@ function loop(){
   if(cfg.settings.debug) drawDebug(t);
   if(rec){ if(t<rec.start) drawOverlayText(String(Math.ceil((rec.start-t)/1000)),`Приготовься: ${rec.hands===2?'две руки':'одна рука'} в кадре`);
     else drawOverlayText('Запись…',`Держи жест и чуть двигай рукой · кадров: ${rec.samples.length}`); }
-  if(statusMsg&&(!obsMode||!$('#panel').classList.contains('hidden'))) drawOverlayText('Gesture FX',statusMsg);
+  if(statusMsg&&!document.body.classList.contains('studio-open')&&!obsMode) drawOverlayText('Gesture FX',statusMsg);
   if(t-detT>1000){ detRate=detCount*1000/(t-detT); detCount=0; detT=t; }
   if(t-hudT>150){ hudT=t; updateHud(); }
   requestAnimationFrame(loop);
@@ -1455,6 +1546,7 @@ function loop(){
 // ====================== HUD ======================
 const obsMode=new URLSearchParams(location.search).has('obs');
 function updateHud(){
+  if(document.body.classList.contains('studio-open')) updateStudioStatus();
   const hud=$('#hud'); const show=cfg.settings.showHud&&!(obsMode&&$('#panel').classList.contains('hidden')); const s=cfg.settings;
   hud.classList.toggle('hidden',!show);
   if(show){ const names=[...activeNow].map(([id,arr])=>gestureLabel(id)+(arr.length>1?` ×${arr.length}`:'')).join(', ')||'—';
@@ -1474,16 +1566,168 @@ function updateHud(){
 
 // ====================== UI ======================
 let curTab='rules';
-document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
-  curTab=b.dataset.tab; document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
-  document.querySelectorAll('.body').forEach(x=>x.classList.toggle('hidden',x.id!=='tab-'+curTab)); });
-function togglePanel(force){ const p=$('#panel'); const hide=force!=null?!force:!p.classList.contains('hidden'); p.classList.toggle('hidden',hide);
-  $('#gear').classList.toggle('hidden',!hide||obsMode); audio(); }
+const TAB_INFO={
+  rules:{label:'Правила',title:'Твой стрим. Твои жесты.',description:'Превращай движения в эффекты и управляй эфиром.',section:'Правила жестов',action:'Добавить правило'},
+  custom:{label:'Жесты',title:'Движение с характером.',description:'Записывай свои жесты и собирай их в комбо.',section:'Мои жесты',action:'Записать жест'},
+  knobs:{label:'Ручки',title:'Всё в твоих руках.',description:'Меняй громкость, масштаб и эффекты одним движением.',section:'Регуляторы жестами',action:'Добавить ручку'},
+  library:{label:'Библиотека',title:'Больше магии в эфире.',description:'Выбирай эффекты, пробуй и добавляй к своим жестам.',section:'Библиотека эффектов',action:null},
+  settings:{label:'Настройки',title:'Приготовься к эфиру.',description:'Подключи источник и настрой распознавание под себя.',section:'Настройки студии',action:null}
+};
+function selectTab(tab){
+  if(!TAB_INFO[tab]) return;
+  curTab=tab; const info=TAB_INFO[tab];
+  document.querySelectorAll('.tabs button').forEach(b=>{b.classList.toggle('on',b.dataset.tab===tab); if(b.dataset.tab===tab) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current');});
+  document.querySelectorAll('.body').forEach(x=>x.classList.toggle('hidden',x.id!=='tab-'+tab));
+  $('#breadcrumb-tab').textContent=info.label; $('#page-title').textContent=info.title; $('#page-description').textContent=info.description; $('#section-title').textContent=info.section;
+  $('#primary-action').classList.toggle('hidden',!info.action); $('#primary-action').replaceChildren(icon('plus'),info.action||'');
+  $('#search-wrap').classList.toggle('hidden',tab!=='rules'); updateStudioCounts();
+}
+function updateStudioCounts(){
+  const active=cfg.rules.filter(r=>r.enabled).length;
+  $('#nav-rule-count').textContent=cfg.rules.length;
+  $('#studio-rules').replaceChildren(String(active),el('span',{},'из '+cfg.rules.length));
+  const count={rules:cfg.rules.length,custom:cfg.customGestures.length,knobs:cfg.knobs.length,library:Object.keys(EFFECTS).length}[curTab];
+  $('#section-count').classList.toggle('hidden',count==null);
+  $('#section-count').textContent=curTab==='rules'?`${active} из ${count} вкл.`:String(count??'');
+}
+function updateStudioStatus(){
+  const source=frameSource(), s=cfg.settings, modelError=statusMsg.startsWith('Не удалось загрузить');
+  $('#studio-fps').replaceChildren(fps.toFixed(0),el('span',{},'FPS'));
+  $('#studio-hands').replaceChildren(String(hands.length),el('span',{},'из 2'));
+  $('#studio-obs').textContent=obs.ready?'OBS подключён':obs.state==='connecting'?'Подключение к OBS…':s.obsWs.enabled?'OBS не подключён':'OBS выключен';
+  $('#obs-dot').classList.toggle('ready',obs.ready);
+  $('#studio-obs-hint').textContent=obs.ready?'Соединение активно. Эфир под контролем.':'Подключи OBS, чтобы управлять стримом жестами.';
+  $('#preview-source').textContent=isObsInput()?'Источник OBS'+(s.obsSource?' · '+s.obsSource:''):'Камера браузера';
+  $('#preview-dot').classList.toggle('ready',!!source); $('#tracking-dot').classList.toggle('ready',!!source&&!!recognizer);
+  const tracking=$('#tracking-status');
+  tracking.textContent=modelError?'Модель недоступна · проверь интернет':!source?'Ожидание источника':!recognizer?'Загрузка распознавания…':hands.length?'Распознано рук: '+hands.length:'Распознавание активно';
+  tracking.classList.toggle('st-err',modelError); tracking.title=statusMsg;
+  const empty=$('#preview-empty'); empty.style.opacity=fx.length||rec||source&&s.showCamera?'0':'1';
+  // The canvas is above the empty state; hide its button while a camera frame is visible.
+  empty.inert=!!(fx.length||rec||source&&s.showCamera);
+  $('#preview-title').textContent=source?'Покажи свой жест':'Всё начинается с жеста';
+  $('#preview-message').textContent=source?'Источник подключён. Включи показ камеры в настройках или проверь эффект кнопкой ▶.':isObsInput()&&s.obsSource?'Ожидаю кадры из OBS. Проверь подключение и имя источника в настройках.':'Подключи камеру или источник OBS, а магию оставь своим рукам.';
+}
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>selectTab(b.dataset.tab));
+function togglePanel(force,withAudio=true){
+  const p=$('#panel'), show=force!=null?force:p.classList.contains('hidden');
+  p.classList.toggle('hidden',!show); document.body.classList.toggle('studio-open',show);
+  $('#gear').classList.toggle('hidden',show||obsMode); $('#gear').setAttribute('aria-expanded',String(show));
+  if(show) $('#preview-window').append($('#stage-shell')); else document.body.prepend($('#stage-shell'));
+  resize(); if(withAudio){ audio(); if(show) document.querySelector(`.tabs button[data-tab="${curTab}"]`).focus(); else if(!obsMode) $('#gear').focus(); }
+}
 $('#gear').onclick=()=>togglePanel(true); $('#close').onclick=()=>togglePanel(false);
-addEventListener('keydown',e=>{ if(e.target.matches('input,textarea,select')) return;
+$('#connect-obs').onclick=$('#setup-source').onclick=()=>{selectTab('settings'); $('#tab-settings').scrollTop=0;};
+document.querySelectorAll('[data-effect]').forEach(b=>b.onclick=()=>{fireRule({effect:b.dataset.effect,params:{},sound:'none'});toast('Превью: '+EFFECTS[b.dataset.effect].name);});
+$('#rule-search').oninput=()=>renderRules();
+$('#primary-action').onclick=()=>{
+  if(curTab==='rules') addRule();
+  else if(curTab==='knobs'){cfg.knobs.push(newKnob()); save(); renderKnobs(); $('#tab-knobs').lastElementChild?.scrollIntoView({block:'nearest'});}
+  else if(curTab==='custom'){const root=$('#tab-custom');root.scrollTop=0;root.querySelector('input[type=text]')?.focus();}
+};
+addEventListener('keydown',e=>{ if($('#update-dialog').open||e.target.matches('input,textarea,select')) return;
   if(e.key==='h'||e.key==='H'||e.key==='р'||e.key==='Р') togglePanel();
   if((e.key==='c'||e.key==='C'||e.key==='с'||e.key==='С')&&snapTarget&&!$('#panel').classList.contains('hidden')&&curTab==='custom') snapshotSample(snapTarget); });
 addEventListener('pointerdown',()=>audio(),{once:true});
+
+// ====================== Обновление из репозитория ======================
+const UPDATE_REPO_API='https://api.github.com/repos/DrCuper/stream-gesture-control';
+const UPDATE_API=UPDATE_REPO_API+'/releases/latest';
+const sourceRevision=document.querySelector('meta[name="gesturefx-source-revision"]')?.content||'local';
+const appVersion=document.querySelector('meta[name="gesturefx-version"]')?.content||'0.0.0';
+const stableVersion=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+$('#app-version').textContent='v'+appVersion;
+const updater={source:null,revision:'',checking:false,writing:false,installed:false,controller:null};
+const canReplaceFile=window.isSecureContext&&typeof window.showSaveFilePicker==='function';
+function updateMessage(message,error=false){ $('#update-status').textContent=message; $('#update-status').classList.toggle('st-err',error); }
+function renderUpdateActions(){
+  const busy=updater.checking||updater.writing, available=!!updater.source&&!updater.installed;
+  $('#update-recheck').disabled=busy||updater.installed;
+  $('#update-download').disabled=busy||!available;
+  $('#update-install').classList.toggle('hidden',!canReplaceFile); $('#update-install').disabled=busy||!available;
+  $('#update-reload').classList.toggle('hidden',!updater.installed); $('#update-reload').disabled=busy;
+  $('#update-close').disabled=updater.writing;
+}
+function isGestureSource(source){
+  const end=source.search(/<\/head\s*>/i), head=source.slice(0,end);
+  return end>0&&/^\s*<!doctype html>/i.test(source)&&/<title>\s*Gesture FX\s*<\/title>/i.test(head)&&source.includes(STORE_KEY)&&/<canvas\s+id=["']stage["']/.test(source);
+}
+function stampSource(source,revision){
+  const end=source.search(/<\/head\s*>/i);
+  const head=source.slice(0,end).replace(/<meta\s+name=["']gesturefx-source-revision["'][^>]*>\s*/gi,'');
+  return head+`<meta name="gesturefx-source-revision" content="${revision}">\n`+source.slice(end);
+}
+async function checkForUpdate(){
+  if(updater.checking||updater.writing||updater.installed) return;
+  updater.checking=true; updater.source=null; updater.revision=''; renderUpdateActions();
+  $('#update-latest').textContent='Проверяю…'; $('#update-notes').classList.add('hidden'); updateMessage('Проверяю опубликованные релизы…');
+  const controller=new AbortController(); updater.controller=controller; let timedOut=false;
+  const timeout=setTimeout(()=>{timedOut=true;controller.abort();},15000);
+  try{
+    const response=await fetch(UPDATE_API,{cache:'no-store',credentials:'omit',headers:{Accept:'application/vnd.github+json'},signal:controller.signal});
+    if(!response.ok) throw new Error(response.status===403||response.status===429?'GitHub ограничил запросы или доступ к репозиторию. Попробуй позже.':response.status===404?'Опубликованных релизов пока нет или репозиторий недоступен. Проверь ссылку выше.':`GitHub ответил с ошибкой ${response.status}. Попробуй позже.`);
+    const release=await response.json(), version=String(release.tag_name||'').replace(/^v/,'');
+    if(release.draft!==false||release.prerelease!==false||release.tag_name!=='v'+version||!stableVersion.test(version)||!Array.isArray(release.assets)||!release.assets.some(a=>a.name==='gesture-fx.html'&&a.state==='uploaded')) throw new Error('В релизе пока нет готового HTML-файла. Попробуй позже.');
+    $('#update-latest').textContent=release.tag_name;
+    $('#update-notes-text').textContent=typeof release.body==='string'?release.body:'Описание изменений не добавлено.';
+    $('#update-release-link').href='https://github.com/DrCuper/stream-gesture-control/releases/tag/'+encodeURIComponent(release.tag_name);
+    $('#update-notes').classList.remove('hidden');
+    const installed=appVersion.split('.').map(Number), latest=version.split('.').map(Number);
+    const different=installed.findIndex((v,i)=>v!==latest[i]);
+    if(different>=0&&installed[different]>latest[different]){updateMessage('Текущая сборка новее опубликованного релиза. Обновление не требуется.');return;}
+    const fileResponse=await fetch(UPDATE_REPO_API+'/contents/gesture-fx.html?ref='+encodeURIComponent(release.tag_name),{cache:'no-store',credentials:'omit',headers:{Accept:'application/vnd.github+json'},signal:controller.signal});
+    if(!fileResponse.ok) throw new Error(`Не удалось получить HTML релиза (GitHub ${fileResponse.status}). Попробуй позже.`);
+    const data=await fileResponse.json();
+    if(data.type!=='file'||data.path!=='gesture-fx.html'||data.encoding!=='base64'||typeof data.content!=='string'||!/^[a-f0-9]{40}$/.test(data.sha)||data.content.length>3000000) throw new Error('GitHub вернул неожиданный формат файла. Обновление не загружено.');
+    const bytes=Uint8Array.from(atob(data.content.replace(/\s/g,'')),c=>c.charCodeAt(0));
+    const source=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+    if(!isGestureSource(source)) throw new Error('В репозитории найден другой или повреждённый HTML-файл. Обновление не загружено.');
+    const versionMeta=source.slice(0,source.search(/<\/head\s*>/i)).match(/<meta\s+name=["']gesturefx-version["']\s+content=["']([^"']+)["']/i);
+    if(versionMeta?.[1]!==version) throw new Error('Версия HTML не совпадает с версией релиза. Обновление не загружено.');
+    updater.revision=data.sha;
+    if(sourceRevision===data.sha&&appVersion===version) updateMessage('У тебя уже установлена текущая версия из релизов.');
+    else {updater.source=stampSource(source,data.sha); updateMessage('Релиз '+release.tag_name+' готов к установке. Список изменений — выше.');}
+  }catch(e){
+    if(!controller.signal.aborted||timedOut){$('#update-latest').textContent='Недоступно';updateMessage(timedOut?'GitHub не ответил за 15 секунд. Проверь интернет и попробуй снова.':e instanceof TypeError?'Не удалось загрузить обновление. Проверь интернет и доступ к GitHub.':e.message,true);}
+  }finally{clearTimeout(timeout); updater.controller=null; updater.checking=false; renderUpdateActions();}
+}
+function prepareUpdate(){
+  if(!updater.source||updater.checking||updater.writing||updater.installed) return false;
+  if(!persistConfig()){updateMessage('Настройки не сохранились. Экспортируй их в разделе «Настройки» перед заменой файла.',true);return false;}
+  return true;
+}
+function downloadUpdate(){
+  if(!prepareUpdate()) return;
+  const url=URL.createObjectURL(new Blob([updater.source],{type:'text/html;charset=utf-8'}));
+  const a=el('a',{href:url,download:'gesture-fx.html'});document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+  updateMessage('Скачивание началось. Замени открытый HTML-файл скачанным под тем же именем. Затем обнови страницу в браузере или кэш браузерного источника в OBS.');
+}
+async function installUpdate(){
+  if(!canReplaceFile||!prepareUpdate()) return;
+  updater.writing=true; renderUpdateActions(); let writable=null;
+  try{
+    // Open the picker directly from the click so browser user activation is preserved.
+    const handle=await window.showSaveFilePicker({id:'gesturefx-update',suggestedName:decodeURIComponent(location.pathname.split('/').pop())||'gesture-fx.html',types:[{description:'Gesture FX HTML',accept:{'text/html':['.html']}}]});
+    const existing=await handle.getFile();
+    if(existing.size&&!isGestureSource(await existing.text())) throw new Error('Выбран другой файл. Для замены выбери HTML-файл Gesture FX.');
+    writable=await handle.createWritable(); await writable.write(new Blob([updater.source],{type:'text/html;charset=utf-8'})); await writable.close(); writable=null;
+    updater.installed=true;
+    updateMessage('Файл сохранён. Если заменён открытый HTML-файл, нажми «Перезапустить». Если сохранён новый файл — открой его.');
+  }catch(e){
+    if(writable) try{await writable.abort();}catch{}
+    updateMessage(e.name==='AbortError'?'Выбор файла отменён. Можно выбрать файл снова или скачать обновление.':e.name==='NotAllowedError'?'Нет разрешения на запись. Скачай обновление и замени файл вручную.':e.message,true);
+  }finally{updater.writing=false; renderUpdateActions();}
+}
+$('#check-update').onclick=()=>{
+  if(!$('#update-dialog').open) $('#update-dialog').showModal();
+  $('#update-current').textContent='v'+appVersion+(sourceRevision==='local'?' · локальная':'');
+  $('#update-instructions').textContent=canReplaceFile?'«Заменить файл…» откроет системный диалог. Выбери открытый HTML-файл Gesture FX. Настройки и медиа сохранятся при замене файла по тому же пути.':'Скачай HTML и замени им текущий файл по тому же пути. Настройки и медиа останутся в этом браузере. OBS может блокировать скачивание — тогда открой этот HTML в Chrome/Edge и используй кнопку там.';
+  renderUpdateActions(); checkForUpdate();
+};
+$('#update-close').onclick=()=>$('#update-dialog').close();
+$('#update-dialog').addEventListener('cancel',e=>{if(updater.writing)e.preventDefault();});
+$('#update-recheck').onclick=checkForUpdate; $('#update-download').onclick=downloadUpdate; $('#update-install').onclick=installUpdate;
+$('#update-reload').onclick=()=>{if(persistConfig())location.reload();else updateMessage('Сначала сохрани или экспортируй настройки. Перезапуск отменён.',true);};
 
 // opts.any — добавить пункт «любой жест / рука в кадре» (для ручек); opts.noCombo — без комбо (шаги комбо)
 function gestureSelect(value,onchange,opts={}){
@@ -1555,43 +1799,52 @@ function paramInput(spec,val,onchange){
   if(spec.type==='color') return el('input',{type:'color',value:val,oninput:e=>onchange(e.target.value)});
   return el('input',{type:'text',class:'grow',value:val,list:spec.list||null,placeholder:spec.list?'начни вводить или выбери':null,oninput:e=>onchange(e.target.value)});
 }
+function addRule(){
+  const rule={id:uid(),enabled:true,gesture:'Thumb_Up',effect:'confetti',params:{},sound:'pop',hold:350,cooldown:2500,repeat:false};
+  cfg.rules.push(rule); $('#rule-search').value=''; save(); renderRules();
+  const card=document.getElementById('rule-'+rule.id); card.querySelector('details').open=true; card.scrollIntoView({block:'nearest'}); card.querySelector('select').focus();
+}
 function renderRules(){
-  const root=$('#tab-rules'); root.innerHTML='';
-  root.append(el('p',{class:'hint'},'Жест → эффект. «Удержание» — сколько держать жест до срабатывания, «Кулдаун» — пауза до следующего раза. На один жест можно повесить несколько правил. Жесты видны на обеих руках: эффекты, привязанные к руке (конфетти, сердечки, реакция, взрыв…), срабатывают из каждой руки отдельно — два 👍 дадут два залпа.'));
-  cfg.rules.forEach((rule,idx)=>{
-    const e=EFFECTS[rule.effect]; const p=ruleParams(rule);
-    const card=el('div',{class:'card'+(rule.enabled?'':' off')});
-    card.append(el('div',{class:'row'},
-      el('input',{type:'checkbox',checked:rule.enabled,title:'Включено',onchange:ev=>{rule.enabled=ev.target.checked;card.classList.toggle('off',!rule.enabled);save();}}),
-      gestureSelect(rule.gesture,v=>{rule.gesture=v;save();}),
-      el('button',{class:'b i',title:'Проверить',onclick:()=>fireRule(rule)},'▶'),
-      el('button',{class:'b i d',title:'Удалить',onclick:()=>{cfg.rules.splice(idx,1);save();renderRules();}},'✕')));
-    const effSel=el('select',{class:'grow',onchange:ev=>{rule.effect=ev.target.value;rule.params={};rule.sound=EFFECTS[rule.effect].sound;save();renderRules();}});
+  const root=$('#tab-rules'), open=new Set([...root.querySelectorAll('details[open]')].map(e=>e.dataset.rule)); root.innerHTML='';
+  const query=$('#rule-search').value.trim().toLocaleLowerCase('ru');
+  const filtered=cfg.rules.filter(rule=>[gestureLabel(rule.gesture),EFFECTS[rule.effect]?.name,rule.effect].join(' ').toLocaleLowerCase('ru').includes(query));
+  filtered.forEach(rule=>{
+    const idx=cfg.rules.indexOf(rule), e=EFFECTS[rule.effect], p=ruleParams(rule);
+    const card=el('article',{class:'card rule-card'+(rule.enabled?'':' off'),id:'rule-'+rule.id});
+    const enabled=el('input',{type:'checkbox',checked:rule.enabled,'aria-label':'Включить правило '+(idx+1),onchange:ev=>{rule.enabled=ev.target.checked;card.classList.toggle('off',!rule.enabled);save();}});
+    const play=el('button',{class:'b i ghost',title:'Проверить эффект','aria-label':'Проверить правило '+(idx+1),onclick:()=>{fireRule(rule); toast('Превью: '+(e?.name||rule.effect));}},icon('play'));
+    const remove=el('button',{class:'b i ghost d',title:'Удалить правило','aria-label':'Удалить правило '+(idx+1),onclick:()=>{cfg.rules.splice(idx,1);save();renderRules();}},icon('trash'));
+    card.append(el('div',{class:'rule-topline'},el('span',{class:'rule-number'},'ПРАВИЛО '+String(idx+1).padStart(2,'0')),play,remove,el('label',{class:'rule-switch',title:'Включить правило'},enabled)));
+    const gesture=gestureSelect(rule.gesture,v=>{rule.gesture=v;save();renderRules();}); gesture.setAttribute('aria-label','Жест правила '+(idx+1));
+    const effSel=el('select',{'aria-label':'Эффект правила '+(idx+1),onchange:ev=>{rule.effect=ev.target.value;rule.params={};rule.sound=EFFECTS[rule.effect].sound;save();renderRules();}});
     for(const [id,x] of Object.entries(EFFECTS)) effSel.append(el('option',{value:id,selected:id===rule.effect},`${x.icon} ${x.name}`));
-    card.append(el('div',{class:'row'},el('label',{},'Эффект'),effSel));
+    card.append(el('div',{class:'rule-route'},el('label',{class:'route-field'},el('span',{},'КОГДА ПОКАЗЫВАЮ'),gesture),el('span',{class:'route-arrow'},icon('arrow')),el('label',{class:'route-field'},el('span',{},'ТОГДА ЗАПУСКАЕТСЯ'),effSel)));
+    const ev=isEventGesture(rule.gesture);
+    const meta=el('div',{class:'rule-meta'}); const updateMeta=()=>meta.replaceChildren(el('span',{},ev?'По движению':`Удержание ${rule.hold} мс`),el('span',{},`Пауза ${(rule.cooldown/1000).toLocaleString('ru')} с`),el('span',{},rule.sound==='none'?'Без звука':'Со звуком')); updateMeta(); card.append(meta);
+    const details=el('details',{class:'rule-options','data-rule':rule.id,open:open.has(rule.id)},el('summary',{},'Параметры эффекта'));
     for(const [k,spec] of Object.entries(e?.params||{})){
       const ctl=paramInput(spec,p[k],v=>{rule.params={...rule.params,[k]:v};save();});
-      card.append(el('div',{class:'row'},el('label',{style:ctl.picker?'align-self:flex-start;margin-top:6px':null},spec.label),ctl));
-      if(ctl.picker) card.append(ctl.picker);
+      details.append(el('div',{class:'row'},el('label',{style:ctl.picker?'align-self:flex-start;margin-top:6px':null},spec.label),ctl));
+      if(ctl.picker) details.append(ctl.picker);
     }
-    const snd=el('select',{onchange:ev=>{rule.sound=ev.target.value;save();}});
+    const snd=el('select',{'aria-label':'Звук эффекта',onchange:ev=>{rule.sound=ev.target.value;save();updateMeta();}});
     for(const [k,l] of Object.entries(SOUNDS)) snd.append(el('option',{value:k,selected:k===rule.sound},l));
-    card.append(el('div',{class:'row'},el('label',{},'Звук'),snd));
-    const ev=isEventGesture(rule.gesture);
-    card.append(el('div',{class:'row'},
-      el('label',{title:ev?'Это событие (движение или комбо): срабатывает сразу, удержание не используется':null},ev?'Удержание — нет':'Удержание, мс'),
-      el('input',{type:'number',value:rule.hold,disabled:ev,onchange:ev=>{rule.hold=+ev.target.value||0;save();}}),
-      el('span',{class:'hint'},'Кулдаун'),el('input',{type:'number',value:rule.cooldown,onchange:ev=>{rule.cooldown=+ev.target.value||0;save();}})));
-    if(e?.held) card.append(el('p',{class:'hint'},'Эффект живёт, пока держишь жест, и гаснет, когда отпустишь. «Повторять» здесь не нужно.'));
-    else card.append(el('div',{class:'row'},el('label',{},''),
-      el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:rule.repeat,onchange:ev=>{rule.repeat=ev.target.checked;save();}}),' повторять, пока держу жест')));
-    if(e?.anchored&&!e.twoHands) card.append(el('div',{class:'row'},el('label',{},''),
+    details.append(el('div',{class:'row'},el('label',{},'Звук'),snd));
+    details.append(el('div',{class:'row'},
+      el('label',{title:ev?'Движения и комбо срабатывают сразу':null},ev?'Без удержания':'Удержание, мс'),
+      el('input',{type:'number',min:'0','aria-label':'Удержание в миллисекундах',value:rule.hold,disabled:ev,onchange:ev=>{rule.hold=Math.max(0,+ev.target.value||0);ev.target.value=rule.hold;save();updateMeta();}}),
+      el('span',{class:'hint'},'Пауза, мс'),el('input',{type:'number',min:'0','aria-label':'Пауза в миллисекундах',value:rule.cooldown,onchange:ev=>{rule.cooldown=Math.max(0,+ev.target.value||0);ev.target.value=rule.cooldown;save();updateMeta();}})));
+    if(e?.held) details.append(el('p',{class:'hint'},'Эффект живёт, пока держишь жест, и гаснет, когда отпускаешь.'));
+    else details.append(el('div',{class:'row'},el('label',{style:'min-width:0;color:var(--text)'},el('input',{type:'checkbox',checked:rule.repeat,onchange:ev=>{rule.repeat=ev.target.checked;save();}}),' Повторять, пока держу жест')));
+    if(e?.anchored&&!e.twoHands) details.append(el('div',{class:'row'},
       el('label',{style:'min-width:0;color:var(--text)',title:'Один и тот же жест двумя руками — эффект из каждой руки'},
-        el('input',{type:'checkbox',checked:rule.perHand!==false,onchange:ev=>{rule.perHand=ev.target.checked;save();}}),' с каждой руки отдельно')));
-    root.append(card);
+        el('input',{type:'checkbox',checked:rule.perHand!==false,onchange:ev=>{rule.perHand=ev.target.checked;save();}}),' С каждой руки отдельно')));
+    card.append(details); root.append(card);
   });
-  root.append(el('div',{class:'row'},
-    el('button',{class:'b p',onclick:()=>{cfg.rules.push({id:uid(),enabled:true,gesture:'Thumb_Up',effect:'confetti',params:{},sound:'pop',hold:350,cooldown:2500,repeat:false});save();renderRules();}},'+ Добавить правило')));
+  if(!filtered.length) root.append(el('div',{class:'empty-state'},el('strong',{},query?'Ничего не нашлось':'Первый жест — за тобой'),query?'Попробуй другое название жеста или эффекта.':'Добавь правило: выбери жест и эффект, который он запускает.'));
+  root.append(el('button',{class:'b rule-add',onclick:addRule},icon('plus'),'Добавить правило'));
+  root.append(el('p',{class:'rules-help'},'На один жест можно добавить несколько эффектов. Параметры, звук и время срабатывания — внутри карточки.'));
+  updateStudioCounts();
 }
 function renderCustom(){
   const root=$('#tab-custom'); root.innerHTML='';
@@ -1868,6 +2121,8 @@ window.GFX={cfg:()=>cfg,effects:EFFECTS,fire:(effect,params={},anchor)=>fireRule
 document.body.classList.toggle('solid', !obsMode);
 if(obsMode) $('#gear').classList.add('hidden');
 renderAll();
+selectTab('rules');
+togglePanel(!obsMode,false);
 requestAnimationFrame(loop);
 startCamera();
 initModel();
